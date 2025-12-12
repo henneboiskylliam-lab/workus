@@ -1,0 +1,189 @@
+{
+  "hero": {
+    "phrases": [
+      {
+        "id": 1,
+        "text": "Apprenez ce que vous souhaitez",
+        "icon": "BookOpen",
+        "highlight": "ce que vous souhaitez"
+      },
+      {
+        "id": 2,
+        "text": "Quand vous le souhaitez",
+        "icon": "Clock",
+        "highlight": "Quand vous le souhaitez"
+      },
+      {
+        "id": 3,
+        "text": "Avec qui vous le souhaitez",
+        "icon": "Users",
+        "highlight": "qui vous le souhaitez"
+      },
+      {
+        "id": 4,
+        "text": "Pour bâtir l'avenir que vous souhaitez",
+        "icon": "Rocket",
+        "highlight": "l'avenir que vous souhaitez"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "freedom",
+      "title": "La liberté d'apprendre",
+      "subtitle": "Votre parcours, vos règles",
+      "description": "Chez Work Us, nous croyons que chaque personne a un chemin unique. Choisissez parmi des centaines de compétences, de la programmation à la cuisine, du design au leadership. Votre curiosité est votre seule limite.",
+      "features": [
+        {
+          "icon": "Compass",
+          "title": "Explorez sans limites",
+          "description": "Plus de 500 spécialités à découvrir"
+        },
+        {
+          "icon": "Route",
+          "title": "Parcours personnalisés",
+          "description": "L'IA adapte le contenu à votre niveau"
+        },
+        {
+          "icon": "Zap",
+          "title": "Apprentissage actif",
+          "description": "Exercices pratiques pour ancrer vos connaissances"
+        }
+      ],
+      "image": "/images/sections/freedom.svg",
+      "gradient": "from-blue-600 to-cyan-500"
+    },
+    {
+      "id": "flexibility",
+      "title": "Apprenez à votre rythme",
+      "subtitle": "Votre temps, votre engagement",
+      "description": "5 minutes ou 5 heures, matin ou soir, sur votre canapé ou dans le métro. Work Us s'adapte à votre vie, pas l'inverse. Progressez chaque jour, même avec un emploi du temps chargé.",
+      "features": [
+        {
+          "icon": "Smartphone",
+          "title": "Multi-plateforme",
+          "description": "Web, mobile, tablette - apprenez partout"
+        },
+        {
+          "icon": "Download",
+          "title": "Mode hors-ligne",
+          "description": "Téléchargez pour apprendre sans connexion"
+        },
+        {
+          "icon": "Timer",
+          "title": "Sessions modulables",
+          "description": "De 5 minutes à plusieurs heures"
+        }
+      ],
+      "image": "/images/sections/flexibility.svg",
+      "gradient": "from-purple-600 to-pink-500"
+    },
+    {
+      "id": "community",
+      "title": "Une communauté qui vous ressemble",
+      "subtitle": "Ensemble, on va plus loin",
+      "description": "Rejoignez des milliers de passionnés qui partagent vos intérêts. Posez des questions, partagez vos découvertes, trouvez un mentor ou devenez-en un. L'apprentissage social est plus puissant.",
+      "features": [
+        {
+          "icon": "MessageCircle",
+          "title": "Discussions actives",
+          "description": "Échangez avec la communauté"
+        },
+        {
+          "icon": "UserCheck",
+          "title": "Mentorat",
+          "description": "Connectez-vous avec des experts"
+        },
+        {
+          "icon": "Trophy",
+          "title": "Défis collectifs",
+          "description": "Participez à des challenges en équipe"
+        }
+      ],
+      "image": "/images/sections/community.svg",
+      "gradient": "from-emerald-600 to-teal-500"
+    },
+    {
+      "id": "future",
+      "title": "Construisez votre avenir",
+      "subtitle": "Chaque compétence compte",
+      "description": "Vos compétences d'aujourd'hui sont les opportunités de demain. Suivez votre progression, obtenez des certifications reconnues, et montrez au monde ce dont vous êtes capable.",
+      "features": [
+        {
+          "icon": "Award",
+          "title": "Certifications",
+          "description": "Validez vos acquis officiellement"
+        },
+        {
+          "icon": "TrendingUp",
+          "title": "Progression visible",
+          "description": "Suivez votre évolution en temps réel"
+        },
+        {
+          "icon": "Briefcase",
+          "title": "Opportunités",
+          "description": "Connectez-vous avec des employeurs"
+        }
+      ],
+      "image": "/images/sections/future.svg",
+      "gradient": "from-amber-500 to-orange-500"
+    }
+  ],
+  "advantages": {
+    "title": "Pourquoi choisir Work Us ?",
+    "subtitle": "La plateforme qui rapproche talents et opportunités",
+    "items": [
+      {
+        "id": "match",
+        "icon": "Link",
+        "title": "Mise en relation intelligente",
+        "description": "Notre algorithme connecte les talents avec les entreprises qui recherchent précisément leurs compétences. Fini les CV génériques, place à la valorisation réelle.",
+        "stat": "85%",
+        "statLabel": "de matching réussi"
+      },
+      {
+        "id": "skills",
+        "icon": "CheckCircle",
+        "title": "Compétences vérifiées",
+        "description": "Chaque compétence est validée par des exercices pratiques et des évaluations. Les employeurs savent exactement ce que vous savez faire.",
+        "stat": "100%",
+        "statLabel": "de compétences prouvées"
+      },
+      {
+        "id": "progress",
+        "icon": "LineChart",
+        "title": "Suivi de progression",
+        "description": "Visualisez votre évolution avec des statistiques détaillées. Identifiez vos forces, travaillez vos faiblesses, et atteignez vos objectifs.",
+        "stat": "2.5x",
+        "statLabel": "plus rapide qu'en autodidacte"
+      },
+      {
+        "id": "market",
+        "icon": "Target",
+        "title": "Alignement marché",
+        "description": "Nos données en temps réel vous montrent les compétences les plus demandées. Investissez votre temps dans ce qui compte vraiment.",
+        "stat": "10K+",
+        "statLabel": "offres d'emploi analysées"
+      }
+    ]
+  },
+  "cta": {
+    "title": "Prêt à transformer votre avenir ?",
+    "subtitle": "Rejoignez plus de 100 000 apprenants qui construisent leur futur avec Work Us",
+    "primaryButton": {
+      "text": "Commencer gratuitement",
+      "link": "/signup"
+    },
+    "secondaryButton": {
+      "text": "Découvrir les spécialités",
+      "link": "/categories/explore"
+    }
+  },
+  "stats": [
+    { "value": "100K+", "label": "Apprenants actifs" },
+    { "value": "500+", "label": "Spécialités" },
+    { "value": "50K+", "label": "Exercices pratiques" },
+    { "value": "95%", "label": "Satisfaction" }
+  ]
+}
+

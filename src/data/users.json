@@ -1,0 +1,23 @@
+{
+  "users": [
+    {
+      "id": "admin-1",
+      "username": "admin",
+      "email": "admin@workus.com",
+      "role": "admin",
+      "avatar": null,
+      "bio": "Administrateur Work Us",
+      "isActive": true,
+      "isVerified": true,
+      "joinedAt": "2024-12-12T00:00:00Z",
+      "lastLoginAt": "2024-12-12T00:00:00Z",
+      "skills": [],
+      "followers": 0,
+      "following": 0,
+      "savedContent": []
+    }
+  ],
+  "passwords": {
+    "admin-1": "admin123"
+  }
+}

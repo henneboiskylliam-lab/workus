@@ -1,0 +1,441 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   THEME VARIABLES - DARK MODE (Default)
+   ============================================ */
+:root,
+.dark {
+  /* Colors */
+  --color-primary: #2e89ff;
+  --color-primary-dark: #1669f5;
+  --color-secondary: #8b5cf6;
+  --color-accent: #10b981;
+  
+  /* Backgrounds */
+  --bg-primary: #0a0f1c;
+  --bg-secondary: #111827;
+  --bg-tertiary: #1f2937;
+  --bg-card: rgba(31, 41, 55, 0.5);
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  
+  /* Text */
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  
+  /* Borders */
+  --border-color: rgba(148, 163, 184, 0.1);
+  --border-color-hover: rgba(148, 163, 184, 0.2);
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.3);
+  --shadow-glow: 0 0 30px rgba(46, 137, 255, 0.3);
+  
+  /* Sidebar */
+  --sidebar-width: 280px;
+  --sidebar-collapsed-width: 80px;
+  
+  /* TopBar */
+  --topbar-height: 64px;
+  
+  /* Component specific */
+  --card-bg: rgba(31, 41, 55, 0.5);
+  --input-bg: #1e293b;
+  --input-border: #334155;
+}
+
+/* ============================================
+   THEME VARIABLES - LIGHT MODE
+   ============================================ */
+.light {
+  /* Colors */
+  --color-primary: #2563eb;
+  --color-primary-dark: #1d4ed8;
+  --color-secondary: #7c3aed;
+  --color-accent: #059669;
+  
+  /* Backgrounds */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #f1f5f9;
+  --bg-card: rgba(241, 245, 249, 0.8);
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  
+  /* Text */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  
+  /* Borders */
+  --border-color: rgba(148, 163, 184, 0.3);
+  --border-color-hover: rgba(148, 163, 184, 0.5);
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 0 30px rgba(37, 99, 235, 0.2);
+  
+  /* Component specific */
+  --card-bg: rgba(255, 255, 255, 0.8);
+  --input-bg: #ffffff;
+  --input-border: #e2e8f0;
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ============================================
+   LIGHT MODE OVERRIDES
+   ============================================ */
+.light body,
+.light {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* Sidebar */
+.light aside {
+  background: rgba(255, 255, 255, 0.95) !important;
+  border-color: var(--border-color) !important;
+}
+
+/* Cards & Panels */
+.light .bg-dark-800\/50,
+.light .bg-dark-800 {
+  background: var(--card-bg) !important;
+}
+
+.light .bg-dark-700\/50,
+.light .bg-dark-700 {
+  background: rgba(241, 245, 249, 0.8) !important;
+}
+
+.light .bg-dark-900\/80,
+.light .bg-dark-900\/95,
+.light .bg-dark-900 {
+  background: rgba(255, 255, 255, 0.95) !important;
+}
+
+/* Borders */
+.light .border-dark-700\/50,
+.light .border-dark-700,
+.light .border-dark-600 {
+  border-color: var(--border-color) !important;
+}
+
+/* Text colors */
+.light .text-white {
+  color: var(--text-primary) !important;
+}
+
+.light .text-dark-300,
+.light .text-dark-400 {
+  color: var(--text-secondary) !important;
+}
+
+.light .text-dark-500 {
+  color: var(--text-muted) !important;
+}
+
+/* Inputs */
+.light input,
+.light textarea,
+.light select {
+  background: var(--input-bg) !important;
+  border-color: var(--input-border) !important;
+  color: var(--text-primary) !important;
+}
+
+.light input::placeholder,
+.light textarea::placeholder {
+  color: var(--text-muted) !important;
+}
+
+/* Hover states */
+.light .hover\:bg-dark-800:hover,
+.light .hover\:bg-dark-700:hover {
+  background: var(--bg-hover) !important;
+}
+
+/* Gradients remain the same */
+.light .bg-gradient-to-br.from-primary-500,
+.light .bg-gradient-to-r.from-primary-500 {
+  /* Keep gradient colors */
+}
+
+/* ============================================
+   SCROLLBAR STYLES
+   ============================================ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+.light ::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+/* Custom scrollbar utilities */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-track-dark-800::-webkit-scrollbar-track {
+  background: #1f2937;
+}
+
+.scrollbar-thumb-dark-600::-webkit-scrollbar-thumb {
+  background: #4b5563;
+  border-radius: 3px;
+}
+
+.hover\:scrollbar-thumb-dark-500:hover::-webkit-scrollbar-thumb {
+  background: #6b7280;
+}
+
+.light .scrollbar-track-dark-800::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.light .scrollbar-thumb-dark-600::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+.light .hover\:scrollbar-thumb-dark-500:hover::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r;
+  }
+  
+  .glass {
+    @apply backdrop-blur-xl bg-white/5 border border-white/10;
+  }
+  
+  .glass-dark {
+    @apply backdrop-blur-xl bg-black/20 border border-white/5;
+  }
+  
+  .glow {
+    box-shadow: var(--shadow-glow);
+  }
+  
+  .glow-sm {
+    box-shadow: 0 0 15px rgba(46, 137, 255, 0.2);
+  }
+  
+  /* Animation delays */
+  .animation-delay-100 { animation-delay: 100ms; }
+  .animation-delay-200 { animation-delay: 200ms; }
+  .animation-delay-300 { animation-delay: 300ms; }
+  .animation-delay-400 { animation-delay: 400ms; }
+  .animation-delay-500 { animation-delay: 500ms; }
+  .animation-delay-600 { animation-delay: 600ms; }
+  .animation-delay-700 { animation-delay: 700ms; }
+  .animation-delay-800 { animation-delay: 800ms; }
+}
+
+/* ============================================
+   COMPONENT STYLES
+   ============================================ */
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all duration-300;
+  }
+  
+  .btn-primary {
+    @apply btn bg-primary-500 hover:bg-primary-600 text-white shadow-lg hover:shadow-xl hover:shadow-primary-500/20 hover:-translate-y-0.5;
+  }
+  
+  .btn-secondary {
+    @apply btn bg-dark-700 hover:bg-dark-600 text-white border border-dark-600 hover:border-dark-500;
+  }
+  
+  .btn-ghost {
+    @apply btn bg-transparent hover:bg-white/5 text-text-secondary hover:text-white;
+  }
+  
+  .btn-accent {
+    @apply btn bg-accent-500 hover:bg-accent-600 text-white shadow-lg hover:shadow-xl hover:shadow-accent-500/20;
+  }
+  
+  .card {
+    @apply bg-dark-800/50 backdrop-blur-sm border border-dark-700/50 rounded-2xl p-6 transition-all duration-300;
+  }
+  
+  .card-hover {
+    @apply card hover:border-primary-500/30 hover:shadow-lg hover:shadow-primary-500/5 hover:-translate-y-1;
+  }
+  
+  .input {
+    @apply w-full px-4 py-3 bg-dark-800 border border-dark-600 rounded-xl text-white placeholder-dark-400 focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all duration-300;
+  }
+  
+  .badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-sm font-medium;
+  }
+  
+  .badge-primary {
+    @apply badge bg-primary-500/20 text-primary-400;
+  }
+  
+  .badge-secondary {
+    @apply badge bg-secondary-500/20 text-secondary-400;
+  }
+  
+  .badge-accent {
+    @apply badge bg-accent-500/20 text-accent-400;
+  }
+}
+
+/* ============================================
+   BACKGROUND PATTERNS
+   ============================================ */
+.bg-grid-pattern {
+  background-image: 
+    linear-gradient(rgba(46, 137, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 137, 255, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+.light .bg-grid-pattern {
+  background-image: 
+    linear-gradient(rgba(37, 99, 235, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37, 99, 235, 0.05) 1px, transparent 1px);
+}
+
+.bg-radial-gradient {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(46, 137, 255, 0.15), transparent);
+}
+
+.light .bg-radial-gradient {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(37, 99, 235, 0.1), transparent);
+}
+
+.bg-mesh {
+  background: 
+    radial-gradient(at 40% 20%, rgba(46, 137, 255, 0.1) 0px, transparent 50%),
+    radial-gradient(at 80% 0%, rgba(139, 92, 246, 0.1) 0px, transparent 50%),
+    radial-gradient(at 0% 50%, rgba(16, 185, 129, 0.1) 0px, transparent 50%),
+    radial-gradient(at 80% 50%, rgba(245, 158, 11, 0.05) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, rgba(239, 68, 68, 0.05) 0px, transparent 50%);
+}
+
+/* ============================================
+   TYPOGRAPHY
+   ============================================ */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.display-text {
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-tertiary) 25%,
+    var(--bg-secondary) 50%,
+    var(--bg-tertiary) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+.pulse-ring::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 2px solid currentColor;
+  animation: pulse-ring 2s ease-out infinite;
+}
+
+/* ============================================
+   LEVEL INDICATOR (0-10)
+   ============================================ */
+.level-bar {
+  @apply relative h-2 bg-dark-700 rounded-full overflow-hidden;
+}
+
+.light .level-bar {
+  @apply bg-gray-200;
+}
+
+.level-fill {
+  @apply absolute left-0 top-0 h-full rounded-full transition-all duration-500;
+}
+
+.level-0 { width: 0%; }
+.level-1 { width: 10%; }
+.level-2 { width: 20%; }
+.level-3 { width: 30%; }
+.level-4 { width: 40%; }
+.level-5 { width: 50%; }
+.level-6 { width: 60%; }
+.level-7 { width: 70%; }
+.level-8 { width: 80%; }
+.level-9 { width: 90%; }
+.level-10 { width: 100%; }
