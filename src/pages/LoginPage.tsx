@@ -25,18 +25,6 @@ export function LoginPage() {
     }
   }
 
-  // Comptes de démo
-  const demoAccounts = [
-    { email: 'admin@workus.com', password: 'admin123', role: 'Admin', color: 'from-red-500 to-orange-500' },
-    { email: 'sophie@workus.com', password: 'creator123', role: 'Créateur', color: 'from-purple-500 to-pink-500' },
-    { email: 'marie@example.com', password: 'user123', role: 'Utilisateur', color: 'from-blue-500 to-cyan-500' },
-  ]
-
-  const fillDemoAccount = (demoEmail: string, demoPassword: string) => {
-    setEmail(demoEmail)
-    setPassword(demoPassword)
-  }
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-dark-950 bg-grid-pattern p-4">
       {/* Background effects */}
@@ -149,21 +137,6 @@ export function LoginPage() {
           </p>
         </div>
 
-        {/* Demo accounts */}
-        <div className="mt-6 p-4 bg-dark-800/30 border border-dark-700/30 rounded-2xl">
-          <p className="text-sm text-dark-400 mb-3 text-center">Comptes de démonstration</p>
-          <div className="grid grid-cols-3 gap-2">
-            {demoAccounts.map((account) => (
-              <button
-                key={account.email}
-                onClick={() => fillDemoAccount(account.email, account.password)}
-                className={`p-2 bg-gradient-to-r ${account.color} bg-opacity-10 border border-dark-700 rounded-lg text-xs text-white hover:border-dark-600 transition-all`}
-              >
-                {account.role}
-              </button>
-            ))}
-          </div>
-        </div>
       </motion.div>
     </div>
   )
