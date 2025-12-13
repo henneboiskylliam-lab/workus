@@ -134,10 +134,26 @@ export function AdminDashboard() {
     setIsLoadingUsers(true)
     
     try {
-      // 1. Charger depuis Supabase (source principale si configuré)
+      // 1. Charger la liste des utilisateurs SUPPRIMÉS (pour les filtrer)
+      const DELETED_KEY = 'workus_deleted_users_v2'
+      let deletedUsers: Record<string, boolean> = {}
+      try {
+        const deleted = localStorage.getItem(DELETED_KEY)
+        if (deleted) {
+          deletedUsers = JSON.parse(deleted)
+          console.log('Utilisateurs supprimés chargés:', Object.keys(deletedUsers).length)
+        }
+      } catch { /* ignorer */ }
+
+      const isDeleted = (id: string, email: string): boolean => {
+        const emailKey = email?.toLowerCase()?.trim()
+        return deletedUsers[id] === true || deletedUsers[emailKey] === true || deletedUsers[email] === true
+      }
+
+      // 2. Charger depuis Supabase (source principale si configuré)
       const supabaseUsers = await loadUsersFromSupabase()
       
-      // 2. Récupérer les OVERRIDES de rôles (modifications admin locales - PRIORITÉ MAXIMALE)
+      // 3. Récupérer les OVERRIDES de rôles (modifications admin locales - PRIORITÉ MAXIMALE)
       const OVERRIDE_KEY = 'workus_role_overrides_v2'
       let roleOverrides: Record<string, string> = {}
       try {
@@ -241,7 +257,13 @@ export function AdminDashboard() {
       const mergedUsers: DisplayUser[] = []
 
       // D'abord les utilisateurs Supabase, mais avec overrides complets si présents
+      // ET en filtrant les utilisateurs supprimés
       for (const user of supabaseUsers) {
+        // Ignorer si supprimé ou déjà présent
+        if (isDeleted(user.id, user.email)) {
+          console.log(`Utilisateur ignoré (supprimé): ${user.email}`)
+          continue
+        }
         if (!allUserIds.has(user.id) && !allEmails.has(user.email)) {
           allUserIds.add(user.id)
           allEmails.add(user.email)
@@ -263,8 +285,11 @@ export function AdminDashboard() {
         }
       }
 
-      // Puis les utilisateurs locaux (seulement s'ils n'existent pas dans Supabase)
+      // Puis les utilisateurs locaux (seulement s'ils n'existent pas dans Supabase et non supprimés)
       for (const user of localUsers) {
+        if (isDeleted(user.id, user.email)) {
+          continue
+        }
         if (!allUserIds.has(user.id) && !allEmails.has(user.email)) {
           allUserIds.add(user.id)
           allEmails.add(user.email)
@@ -636,27 +661,98 @@ export function AdminDashboard() {
   }
 
   // Supprimer un utilisateur
-  const handleDeleteUser = () => {
+  const handleDeleteUser = async () => {
     if (!userToDelete) return
 
-    // Supprimer de localStorage
-    const stored = localStorage.getItem('workus_registered_users')
-    if (stored) {
-      try {
+    console.log('=== Suppression utilisateur ===')
+    console.log('Utilisateur:', userToDelete.username, 'ID:', userToDelete.id, 'Email:', userToDelete.email)
+
+    const emailKey = userToDelete.email.toLowerCase().trim()
+
+    // ÉTAPE 1: Sauvegarder la suppression dans un override persistant
+    const DELETED_KEY = 'workus_deleted_users_v2'
+    try {
+      const existingDeleted = localStorage.getItem(DELETED_KEY)
+      const deletedUsers: Record<string, boolean> = existingDeleted ? JSON.parse(existingDeleted) : {}
+      
+      deletedUsers[emailKey] = true
+      deletedUsers[userToDelete.id] = true
+      
+      localStorage.setItem(DELETED_KEY, JSON.stringify(deletedUsers))
+      console.log('✅ Suppression enregistrée:', emailKey)
+    } catch (err) {
+      console.error('Erreur sauvegarde suppression:', err)
+    }
+
+    // ÉTAPE 2: Supprimer de workus_registered_users
+    try {
+      const stored = localStorage.getItem('workus_registered_users')
+      if (stored) {
         const users = JSON.parse(stored)
         const updatedUsers = users.filter((u: any) => u.id !== userToDelete.id && u.email !== userToDelete.email)
         localStorage.setItem('workus_registered_users', JSON.stringify(updatedUsers))
-      } catch {
-        // Ignorer
       }
+    } catch { /* ignorer */ }
+
+    // ÉTAPE 3: Supprimer de workus_public_users
+    try {
+      const publicUsers = localStorage.getItem('workus_public_users')
+      if (publicUsers) {
+        const users = JSON.parse(publicUsers)
+        const updatedUsers = users.filter((u: any) => u.id !== userToDelete.id && u.email !== userToDelete.email)
+        localStorage.setItem('workus_public_users', JSON.stringify(updatedUsers))
+      }
+    } catch { /* ignorer */ }
+
+    // ÉTAPE 4: Supprimer de IndexedDB
+    try {
+      await userService.delete(userToDelete.id)
+      console.log('✅ Supprimé de IndexedDB')
+    } catch (err) {
+      console.warn('Erreur suppression IndexedDB:', err)
     }
 
-    // Mettre à jour l'état local
+    // ÉTAPE 5: Supprimer de Supabase (en background)
+    if (checkSupabase() && supabase) {
+      supabase
+        .from('profiles')
+        .delete()
+        .eq('id', userToDelete.id)
+        .then(({ error }) => {
+          if (error) console.warn('Supabase delete échoué:', error.message)
+          else console.log('✅ Supprimé de Supabase')
+        })
+        .catch(err => console.warn('Erreur Supabase:', err))
+    }
+
+    // ÉTAPE 6: Nettoyer les overrides de cet utilisateur
+    try {
+      // Nettoyer workus_role_overrides_v2
+      const roleOverrides = localStorage.getItem('workus_role_overrides_v2')
+      if (roleOverrides) {
+        const overrides = JSON.parse(roleOverrides)
+        delete overrides[emailKey]
+        delete overrides[userToDelete.id]
+        localStorage.setItem('workus_role_overrides_v2', JSON.stringify(overrides))
+      }
+      
+      // Nettoyer workus_user_overrides_v2
+      const userOverrides = localStorage.getItem('workus_user_overrides_v2')
+      if (userOverrides) {
+        const overrides = JSON.parse(userOverrides)
+        delete overrides[emailKey]
+        delete overrides[userToDelete.id]
+        localStorage.setItem('workus_user_overrides_v2', JSON.stringify(overrides))
+      }
+    } catch { /* ignorer */ }
+
+    // ÉTAPE 7: Mettre à jour l'état local
     setAllUsers(prev => prev.filter(u => u.id !== userToDelete.id))
 
     setShowDeleteModal(false)
     setUserToDelete(null)
     displayToast('Utilisateur supprimé avec succès', 'success')
+    console.log('=== Suppression terminée ===')
   }
 
   // Basculer le statut actif
