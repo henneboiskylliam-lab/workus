@@ -29,13 +29,17 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useTheme } from '../../contexts/ThemeContext'
-import { useNotifications, NotificationType } from '../../contexts/NotificationsContext'
+import { useNotifications } from '../../contexts/NotificationsContext'
 import { useContentManagement } from '../../contexts/ContentManagementContext'
 import { usePosts } from '../../contexts/PostsContext'
 import { useHelpCenter } from '../../contexts/HelpCenterContext'
+import { InlineErrorBoundary } from '../ui/ErrorBoundary'
 
 // Import des données pour les utilisateurs
 import usersData from '../../data/users.json'
+
+// Type pour les notifications (pour éviter les problèmes d'import)
+type NotificationType = 'like' | 'save' | 'share' | 'repost' | 'follow' | 'message' | 'comment' | 'info' | 'success' | 'warning' | 'error' | 'system' | 'report' | 'mention'
 
 interface TopBarProps {
   onMenuClick: () => void
@@ -78,19 +82,41 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
   
   const searchRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
-  const { user, isAuthenticated, logout } = useAuth()
-  const { theme, setTheme, effectiveTheme } = useTheme()
-  const { 
-    notifications, 
-    unreadCount, 
-    markAsRead, 
-    markAllAsRead, 
-    deleteNotification,
-    getNotificationsByType 
-  } = useNotifications()
-  const { categories, specialties } = useContentManagement()
-  const { posts } = usePosts()
-  const { questions } = useHelpCenter()
+  
+  // Accès sécurisé aux contexts avec valeurs par défaut
+  const authContext = useAuth()
+  const themeContext = useTheme()
+  const notificationsContext = useNotifications()
+  const contentContext = useContentManagement()
+  const postsContext = usePosts()
+  const helpContext = useHelpCenter()
+  
+  // Extraire les valeurs avec fallbacks sécurisés
+  const user = authContext?.user || null
+  const isAuthenticated = authContext?.isAuthenticated || false
+  const logout = authContext?.logout || (() => {})
+  
+  const theme = themeContext?.theme || 'dark'
+  const setTheme = themeContext?.setTheme || (() => {})
+  const effectiveTheme = (themeContext as any)?.effectiveTheme || theme
+  
+  // Notifications avec fallbacks sécurisés
+  const notifications = Array.isArray(notificationsContext?.notifications) ? notificationsContext.notifications : []
+  const unreadCount = typeof notificationsContext?.unreadCount === 'number' ? notificationsContext.unreadCount : 0
+  const markAsRead = notificationsContext?.markAsRead || (() => {})
+  const markAllAsRead = notificationsContext?.markAllAsRead || (() => {})
+  const deleteNotification = notificationsContext?.deleteNotification || (() => {})
+  const getNotificationsByType = notificationsContext?.getNotificationsByType || (() => [])
+  
+  // Content management avec fallbacks
+  const categories = Array.isArray(contentContext?.categories) ? contentContext.categories : []
+  const specialties = Array.isArray(contentContext?.specialties) ? contentContext.specialties : []
+  
+  // Posts avec fallbacks
+  const posts = Array.isArray(postsContext?.posts) ? postsContext.posts : []
+  
+  // Help center avec fallbacks
+  const questions = Array.isArray(helpContext?.questions) ? helpContext.questions : []
   
   // Récupérer les utilisateurs enregistrés
   const getRegisteredUsers = () => {
@@ -105,21 +131,24 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
     return []
   }
 
-  // Filtrer les notifications par type
+  // Filtrer les notifications par type (avec protection)
+  const safeNotifications = Array.isArray(notifications) ? notifications : []
   const typeFilteredNotifications = notificationFilter === 'all' 
-    ? notifications 
-    : getNotificationsByType(notificationFilter)
+    ? safeNotifications 
+    : (Array.isArray(getNotificationsByType(notificationFilter)) ? getNotificationsByType(notificationFilter) : [])
 
-  // Filtrer par statut lu/non lu
-  const filteredNotifications = typeFilteredNotifications.filter(n => {
-    if (readFilter === 'unread') return !n.isRead
-    if (readFilter === 'read') return n.isRead
+  // Filtrer par statut lu/non lu (avec protection)
+  const safeTypeFiltered = Array.isArray(typeFilteredNotifications) ? typeFilteredNotifications : []
+  const filteredNotifications = safeTypeFiltered.filter(n => {
+    if (!n) return false
+    if (readFilter === 'unread') return !n.isRead && !n.read
+    if (readFilter === 'read') return n.isRead || n.read
     return true
   })
 
-  // Compteurs pour les filtres
-  const unreadInType = typeFilteredNotifications.filter(n => !n.isRead).length
-  const readInType = typeFilteredNotifications.filter(n => n.isRead).length
+  // Compteurs pour les filtres (avec protection)
+  const unreadInType = safeTypeFiltered.filter(n => n && !n.isRead && !n.read).length
+  const readInType = safeTypeFiltered.filter(n => n && (n.isRead || n.read)).length
 
   // Pages statiques pour la recherche
   const staticPages: SearchResult[] = [
@@ -173,14 +202,18 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
       const query = searchQuery.toLowerCase()
       const results: SearchResult[] = []
       
-      // Recherche dans les catégories (depuis le contexte)
-      categories.forEach(cat => {
-        if (cat.name.toLowerCase().includes(query) || cat.description?.toLowerCase().includes(query)) {
-          const catSpecialties = specialties.filter(s => s.categoryId === cat.id)
+      // Recherche dans les catégories (depuis le contexte) - avec protection
+      const safeCategories = Array.isArray(categories) ? categories : []
+      const safeSpecialties = Array.isArray(specialties) ? specialties : []
+      
+      safeCategories.forEach(cat => {
+        if (!cat) return
+        if (cat.name?.toLowerCase().includes(query) || cat.description?.toLowerCase().includes(query)) {
+          const catSpecialties = safeSpecialties.filter(s => s && s.categoryId === cat.id)
           results.push({
             id: cat.id,
             type: 'category',
-            title: cat.name,
+            title: cat.name || 'Catégorie',
             subtitle: `Catégorie • ${catSpecialties.length} spécialités`,
             path: `/categories/explore?category=${cat.id}`,
             icon: 'category'
@@ -188,29 +221,34 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
         }
       })
       
-      // Recherche dans les spécialités (depuis le contexte)
-      specialties.forEach(spec => {
-        if (spec.name.toLowerCase().includes(query) || spec.description?.toLowerCase().includes(query)) {
-          const cat = categories.find(c => c.id === spec.categoryId)
+      // Recherche dans les spécialités (depuis le contexte) - avec protection
+      safeSpecialties.forEach(spec => {
+        if (!spec) return
+        if (spec.name?.toLowerCase().includes(query) || spec.description?.toLowerCase().includes(query)) {
+          const cat = safeCategories.find(c => c && c.id === spec.categoryId)
           results.push({
             id: spec.id,
             type: 'specialty',
-            title: spec.name,
+            title: spec.name || 'Spécialité',
             subtitle: `Spécialité • ${cat?.name || 'Sans catégorie'}`,
-            path: `/specialty/${spec.slug}`,
+            path: `/specialty/${spec.slug || spec.id}`,
             icon: 'specialty'
           })
         }
       })
       
-      // Recherche dans les utilisateurs
-      const allUsers = [...usersData.users, ...getRegisteredUsers()]
+      // Recherche dans les utilisateurs - avec protection
+      const usersFromData = Array.isArray(usersData?.users) ? usersData.users : []
+      const registeredUsers = getRegisteredUsers()
+      const allUsers = [...usersFromData, ...(Array.isArray(registeredUsers) ? registeredUsers : [])]
+      
       allUsers.forEach(u => {
-        if (u.username.toLowerCase().includes(query) || u.email?.toLowerCase().includes(query)) {
+        if (!u) return
+        if (u.username?.toLowerCase().includes(query) || u.email?.toLowerCase().includes(query)) {
           results.push({
             id: u.id,
             type: 'user',
-            title: u.username,
+            title: u.username || 'Utilisateur',
             subtitle: `Profil • ${u.role === 'admin' ? 'Administrateur' : u.role === 'creator' ? 'Créateur' : 'Utilisateur'}`,
             path: `/profile/${u.id}`,
             icon: 'user'
@@ -218,10 +256,13 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
         }
       })
       
-      // Recherche dans les posts (contenu + tags)
-      posts.forEach(post => {
+      // Recherche dans les posts (contenu + tags) - avec protection
+      const safePosts = Array.isArray(posts) ? posts : []
+      safePosts.forEach(post => {
+        if (!post) return
         const matchesContent = post.content?.toLowerCase().includes(query)
-        const matchesTags = post.tags?.some(tag => tag.toLowerCase().includes(query))
+        const postTags = Array.isArray(post.tags) ? post.tags : []
+        const matchesTags = postTags.some(tag => tag?.toLowerCase().includes(query))
         const matchesAuthor = post.authorName?.toLowerCase().includes(query)
         
         if (matchesContent || matchesTags || matchesAuthor) {
@@ -229,21 +270,23 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
             id: post.id,
             type: 'post',
             title: post.content?.substring(0, 50) + (post.content && post.content.length > 50 ? '...' : '') || 'Post',
-            subtitle: `Post par ${post.authorName}${post.tags?.length ? ` • ${post.tags.join(', ')}` : ''}`,
+            subtitle: `Post par ${post.authorName || 'Anonyme'}${postTags.length ? ` • ${postTags.join(', ')}` : ''}`,
             path: `/feed#${post.id}`,
             icon: 'post',
-            tags: post.tags
+            tags: postTags
           })
         }
       })
       
-      // Recherche dans les questions du centre d'aide
-      questions.forEach(q => {
-        if (q.question.toLowerCase().includes(query) || q.answer?.toLowerCase().includes(query) || q.category?.toLowerCase().includes(query)) {
+      // Recherche dans les questions du centre d'aide - avec protection
+      const safeQuestions = Array.isArray(questions) ? questions : []
+      safeQuestions.forEach(q => {
+        if (!q) return
+        if (q.question?.toLowerCase().includes(query) || q.answer?.toLowerCase().includes(query) || q.category?.toLowerCase().includes(query)) {
           results.push({
             id: q.id,
             type: 'help',
-            title: q.question.substring(0, 50) + (q.question.length > 50 ? '...' : ''),
+            title: (q.question || '').substring(0, 50) + ((q.question?.length || 0) > 50 ? '...' : ''),
             subtitle: `Centre d'aide • ${q.category || 'Question'}`,
             path: '/help',
             icon: 'help'
@@ -265,40 +308,87 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
     return () => clearTimeout(timer)
   }, [searchQuery])
 
+  // Fonctions avec try/catch pour éviter les crashes
   const handleLogout = () => {
-    logout()
-    setProfileMenuOpen(false)
-    navigate('/')
+    try {
+      logout()
+      setProfileMenuOpen(false)
+      navigate('/')
+    } catch (error) {
+      console.error('Erreur lors de la déconnexion:', error)
+      // Forcer la navigation même en cas d'erreur
+      window.location.href = '/'
+    }
   }
 
   const handleSearchResultClick = (result: SearchResult) => {
-    setSearchOpen(false)
-    setSearchQuery('')
-    setSearchResults([])
-    navigate(result.path)
-  }
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (searchQuery.trim()) {
-      navigate(`/categories/explore?q=${encodeURIComponent(searchQuery)}`)
+    try {
       setSearchOpen(false)
       setSearchQuery('')
       setSearchResults([])
+      if (result?.path) {
+        navigate(result.path)
+      }
+    } catch (error) {
+      console.error('Erreur lors du clic sur le résultat:', error)
+    }
+  }
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    try {
+      e.preventDefault()
+      if (searchQuery.trim()) {
+        navigate(`/categories/explore?q=${encodeURIComponent(searchQuery)}`)
+        setSearchOpen(false)
+        setSearchQuery('')
+        setSearchResults([])
+      }
+    } catch (error) {
+      console.error('Erreur lors de la recherche:', error)
     }
   }
 
   const handleNotificationClick = (notifId: string, targetUrl?: string) => {
-    markAsRead(notifId)
-    if (targetUrl) {
-      navigate(targetUrl)
-      setNotificationsOpen(false)
+    try {
+      if (notifId) {
+        markAsRead(notifId)
+      }
+      if (targetUrl) {
+        navigate(targetUrl)
+        setNotificationsOpen(false)
+      }
+    } catch (error) {
+      console.error('Erreur lors du clic sur la notification:', error)
     }
   }
 
   const toggleTheme = () => {
-    const newTheme = effectiveTheme === 'dark' ? 'light' : 'dark'
-    setTheme(newTheme)
+    try {
+      const newTheme = effectiveTheme === 'dark' ? 'light' : 'dark'
+      setTheme(newTheme)
+    } catch (error) {
+      console.error('Erreur lors du changement de thème:', error)
+    }
+  }
+  
+  // Fonction sécurisée pour marquer toutes les notifications comme lues
+  const safeMarkAllAsRead = () => {
+    try {
+      markAllAsRead()
+    } catch (error) {
+      console.error('Erreur lors du marquage des notifications:', error)
+    }
+  }
+  
+  // Fonction sécurisée pour supprimer une notification
+  const safeDeleteNotification = (id: string) => {
+    try {
+      if (id) {
+        deleteNotification(id)
+      }
+    } catch (error) {
+      console.error('Erreur lors de la suppression de notification:', error)
+    }
   }
 
   const getRoleBadgeColor = () => {
@@ -456,31 +546,51 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
 
         {/* Right side - Actions */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded-xl hover:bg-dark-800 text-dark-300 hover:text-white transition-colors"
+          {/* Bouton thème avec protection */}
+          <InlineErrorBoundary
+            fallback={
+              <button disabled className="p-2 rounded-xl bg-dark-800 text-dark-500 cursor-not-allowed" title="Thème indisponible">
+                <Moon size={20} />
+              </button>
+            }
           >
-            {effectiveTheme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-xl hover:bg-dark-800 text-dark-300 hover:text-white transition-colors"
+            >
+              {effectiveTheme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
+          </InlineErrorBoundary>
 
           {isAuthenticated ? (
             <>
-              {/* Notifications */}
-              <div className="relative">
-                <button
-                  onClick={() => {
-                    setNotificationsOpen(!notificationsOpen)
-                    setProfileMenuOpen(false)
-                  }}
-                  className="relative p-2 rounded-xl hover:bg-dark-800 text-dark-300 hover:text-white transition-colors"
-                >
-                  <Bell size={22} />
-                  {unreadCount > 0 && (
-                    <span className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center text-xs font-bold bg-primary-500 text-white rounded-full">
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  )}
-                </button>
+              {/* Notifications avec protection */}
+              <InlineErrorBoundary
+                fallback={
+                  <button disabled className="p-2 rounded-xl bg-dark-800 text-dark-500 cursor-not-allowed" title="Notifications indisponibles">
+                    <Bell size={22} />
+                  </button>
+                }
+              >
+                <div className="relative">
+                  <button
+                    onClick={() => {
+                      try {
+                        setNotificationsOpen(!notificationsOpen)
+                        setProfileMenuOpen(false)
+                      } catch (error) {
+                        console.error('Erreur lors de l\'ouverture des notifications:', error)
+                      }
+                    }}
+                    className="relative p-2 rounded-xl hover:bg-dark-800 text-dark-300 hover:text-white transition-colors"
+                  >
+                    <Bell size={22} />
+                    {unreadCount > 0 && (
+                      <span className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center text-xs font-bold bg-primary-500 text-white rounded-full">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    )}
+                  </button>
 
                 <AnimatePresence>
                   {notificationsOpen && (
@@ -501,7 +611,7 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
                             <h3 className="font-semibold text-white">Notifications</h3>
                             {unreadCount > 0 && (
                               <button 
-                                onClick={markAllAsRead}
+                                onClick={safeMarkAllAsRead}
                                 className="text-xs text-primary-400 hover:text-primary-300 transition-colors"
                               >
                                 Tout marquer comme lu
@@ -560,9 +670,10 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
                           <div className="flex gap-1 overflow-x-auto pb-1">
                             {notificationFilters.map(filter => {
                               const Icon = filter.icon
-                              const count = filter.id === 'all' 
-                                ? notifications.length 
-                                : getNotificationsByType(filter.id as NotificationType).length
+                              const filterResult = filter.id === 'all' 
+                                ? safeNotifications
+                                : (getNotificationsByType ? getNotificationsByType(filter.id as NotificationType) : [])
+                              const count = Array.isArray(filterResult) ? filterResult.length : 0
                               return (
                                 <button
                                   key={filter.id}
@@ -645,7 +756,7 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
                                     <button 
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        deleteNotification(notif.id)
+                                        safeDeleteNotification(notif.id)
                                       }}
                                       className="p-1 text-dark-400 hover:text-red-400 transition-colors"
                                       title="Supprimer"
@@ -670,9 +781,17 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
                     </>
                   )}
                 </AnimatePresence>
-              </div>
+                </div>
+              </InlineErrorBoundary>
 
-              {/* Profile menu */}
+              {/* Profile menu avec protection */}
+              <InlineErrorBoundary
+                fallback={
+                  <button disabled className="p-2 rounded-xl bg-dark-800 text-dark-500 cursor-not-allowed" title="Menu profil indisponible">
+                    <User size={20} />
+                  </button>
+                }
+              >
               <div className="relative">
                 <button
                   onClick={() => {
@@ -682,9 +801,9 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
                   className="flex items-center gap-3 p-2 rounded-xl hover:bg-dark-800 transition-colors"
                 >
                   <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${getRoleBadgeColor()} flex items-center justify-center text-white font-bold text-sm`}>
-                    {user?.username[0].toUpperCase()}
+                    {user?.username?.[0]?.toUpperCase() || 'U'}
                   </div>
-                  <span className="hidden md:block text-sm font-medium text-white">{user?.username}</span>
+                  <span className="hidden md:block text-sm font-medium text-white">{user?.username || 'Utilisateur'}</span>
                 </button>
 
                 <AnimatePresence>
@@ -701,11 +820,11 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
                         className="absolute right-0 mt-2 w-56 bg-dark-800 border border-dark-700 rounded-2xl shadow-xl overflow-hidden z-50"
                       >
                         <div className="p-4 border-b border-dark-700">
-                          <p className="font-semibold text-white">{user?.username}</p>
-                          <p className="text-sm text-dark-400">{user?.email}</p>
-                          {user?.role !== 'user' && (
+                          <p className="font-semibold text-white">{user?.username || 'Utilisateur'}</p>
+                          <p className="text-sm text-dark-400">{user?.email || ''}</p>
+                          {user && user.role && user.role !== 'user' && (
                             <span className={`inline-block mt-2 px-2 py-0.5 text-xs rounded-full bg-gradient-to-r ${getRoleBadgeColor()} text-white`}>
-                              {user?.role === 'admin' ? 'Administrateur' : user?.role === 'moderator' ? 'Modérateur' : 'Créateur'}
+                              {user.role === 'admin' ? 'Administrateur' : user.role === 'moderator' ? 'Modérateur' : 'Créateur'}
                             </span>
                           )}
                         </div>
@@ -726,7 +845,7 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
                             <Settings size={18} />
                             <span>Paramètres</span>
                           </NavLink>
-                          {(user?.role === 'admin' || user?.role === 'moderator') && (
+                          {user && (user.role === 'admin' || user.role === 'moderator') && (
                             <NavLink
                               to="/admin"
                               onClick={() => setProfileMenuOpen(false)}
@@ -759,6 +878,7 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
                   )}
                 </AnimatePresence>
               </div>
+              </InlineErrorBoundary>
             </>
           ) : (
             <div className="flex items-center gap-2">

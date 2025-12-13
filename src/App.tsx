@@ -10,6 +10,7 @@ import { AdminStatsProvider } from './contexts/AdminStatsContext'
 import { ActivityProvider } from './contexts/ActivityContext'
 import { HelpCenterProvider } from './contexts/HelpCenterContext'
 import { Layout } from './components/layout/Layout'
+import { ErrorBoundary } from './components/ui/ErrorBoundary'
 
 // Pages
 import { HomePage } from './pages/HomePage'
@@ -35,68 +36,101 @@ import { AdminContentPage } from './pages/AdminContentPage'
 import { HelpCenterPage } from './pages/HelpCenterPage'
 
 /**
- * Application principale Work Us
- * Architecture modulaire avec routing centralisé et gestion des rôles
+ * Composant wrapper pour tous les Providers
+ * Ordre stable et cohérent pour éviter les problèmes en production
+ * 
+ * Ordre des Providers (du plus externe au plus interne):
+ * 1. ThemeProvider - Gestion du thème (dark/light)
+ * 2. AuthProvider - Authentification utilisateur
+ * 3. AdminStatsProvider - Statistiques admin (dépend de Auth)
+ * 4. ActivityProvider - Suivi d'activité
+ * 5. HelpCenterProvider - Centre d'aide
+ * 6. UserDataProvider - Données utilisateur (dépend de Auth)
+ * 7. ContentManagementProvider - Gestion du contenu
+ * 8. PostsProvider - Posts et feed
+ * 9. ReportsProvider - Signalements
+ * 10. NotificationsProvider - Notifications (dernier car utilise plusieurs autres)
  */
-function App() {
+function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
       <AuthProvider>
         <AdminStatsProvider>
-        <ActivityProvider>
-        <HelpCenterProvider>
-        <UserDataProvider>
-          <ContentManagementProvider>
-          <PostsProvider>
-          <ReportsProvider>
-          <NotificationsProvider>
-          <Routes>
-        {/* Pages d'authentification (sans Layout) */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+          <ActivityProvider>
+            <HelpCenterProvider>
+              <UserDataProvider>
+                <ContentManagementProvider>
+                  <PostsProvider>
+                    <ReportsProvider>
+                      <NotificationsProvider>
+                        {children}
+                      </NotificationsProvider>
+                    </ReportsProvider>
+                  </PostsProvider>
+                </ContentManagementProvider>
+              </UserDataProvider>
+            </HelpCenterProvider>
+          </ActivityProvider>
+        </AdminStatsProvider>
+      </AuthProvider>
+    </ThemeProvider>
+  )
+}
 
-        {/* Pages avec Layout */}
-        <Route path="/*" element={
+/**
+ * Routes de l'application avec Layout
+ */
+function AppRoutes() {
+  return (
+    <Routes>
+      {/* Pages d'authentification (sans Layout) */}
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+
+      {/* Pages avec Layout */}
+      <Route
+        path="/*"
+        element={
           <Layout>
             <Routes>
               {/* Page d'accueil */}
               <Route path="/" element={<HomePage />} />
-              
+
               {/* Feed */}
               <Route path="/feed" element={<FeedPage />} />
-              
+
               {/* Catégories & Spécialités */}
               <Route path="/categories" element={<CategoriesPage />} />
               <Route path="/categories/suggestions" element={<SuggestionsPage />} />
               <Route path="/categories/explore" element={<ExplorePage />} />
-              
+
               {/* Mes Spécialités (hub) */}
               <Route path="/specialty" element={<MySpecialtiesPage />} />
-              
+
               {/* Spécialité individuelle */}
               <Route path="/specialty/:slug" element={<SpecialtyPage />} />
-              
+
               {/* Discussions */}
               <Route path="/discussions" element={<DiscussionsPage />} />
               <Route path="/discussions/:type" element={<DiscussionsPage />} />
-              
+
               {/* Followers */}
               <Route path="/followers" element={<FollowersPage />} />
-              
+
               {/* Création de contenu */}
               <Route path="/create" element={<CreatePage />} />
-              
+
               {/* Statistiques */}
               <Route path="/stats" element={<StatsPage />} />
-              
+
               {/* Enregistrements */}
               <Route path="/saved" element={<SavedPage />} />
-              
+
               {/* Profil & Paramètres */}
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
-              
+
               {/* Centre d'aide */}
               <Route path="/help" element={<HelpCenterPage />} />
 
@@ -106,18 +140,24 @@ function App() {
               <Route path="/admin/content" element={<AdminContentPage />} />
             </Routes>
           </Layout>
-          } />
-          </Routes>
-          </NotificationsProvider>
-          </ReportsProvider>
-          </PostsProvider>
-          </ContentManagementProvider>
-        </UserDataProvider>
-        </HelpCenterProvider>
-        </ActivityProvider>
-        </AdminStatsProvider>
-      </AuthProvider>
-    </ThemeProvider>
+        }
+      />
+    </Routes>
+  )
+}
+
+/**
+ * Application principale Work Us
+ * Architecture modulaire avec routing centralisé et gestion des rôles
+ * Enveloppée dans un ErrorBoundary global pour éviter les crashes
+ */
+function App() {
+  return (
+    <ErrorBoundary>
+      <AppProviders>
+        <AppRoutes />
+      </AppProviders>
+    </ErrorBoundary>
   )
 }
 
