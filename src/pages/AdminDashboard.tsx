@@ -1727,14 +1727,14 @@ export function AdminDashboard() {
         {activeTab === 'reports' && (
           <div className="p-6 bg-dark-800/50 border border-dark-700/50 rounded-2xl">
             <h2 className="text-lg font-bold text-white mb-6">Signalements</h2>
-            {reports.length === 0 && contextReports.length === 0 ? (
+            {contextReports.length === 0 ? (
               <div className="text-center py-12">
                 <Flag className="w-12 h-12 text-dark-600 mx-auto mb-4" />
                 <p className="text-dark-400">Aucun signalement</p>
               </div>
             ) : (
               <div className="space-y-4">
-                {[...contextReports, ...reports].map((report, index) => (
+                {contextReports.map((report, index) => (
                   <motion.div
                     key={report.id}
                     initial={{ opacity: 0, y: 20 }}
