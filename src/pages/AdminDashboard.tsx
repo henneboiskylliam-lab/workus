@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { 
   LayoutDashboard, Users, FileText, FolderTree, Flag, Settings,
   TrendingUp, UserPlus, FileCheck, AlertTriangle, Eye, Check, X,
   MoreHorizontal, Search, Shield, Ban, Edit2, Calendar, Crown, Star, CheckCircle,
-  Trash2, UserCog
+  Trash2, UserCog, RefreshCw
 } from 'lucide-react'
 import { AnimatePresence } from 'framer-motion'
 import { StatCard } from '../components/ui'
@@ -15,6 +15,7 @@ import { useReports } from '../contexts/ReportsContext'
 import { useAdminStats } from '../contexts/AdminStatsContext'
 import { useActivity } from '../contexts/ActivityContext'
 import { useUsers, userService } from '../db'
+import { supabase, checkSupabase } from '../lib/supabase'
 
 // Interface pour les utilisateurs
 interface DisplayUser {
@@ -90,43 +91,82 @@ export function AdminDashboard() {
   
   // Utilisateurs depuis IndexedDB
   const { users: dbUsers } = useUsers()
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false)
 
-  // Charger tous les utilisateurs depuis IndexedDB et fusionner avec localStorage
-  useEffect(() => {
-    // Récupérer les rôles depuis localStorage (priorité)
-    let localStorageRoles: Record<string, string> = {}
-    try {
-      const registeredUsers = localStorage.getItem('workus_registered_users')
-      if (registeredUsers) {
-        const users = JSON.parse(registeredUsers)
-        users.forEach((u: any) => {
-          if (u.id && u.role) {
-            localStorageRoles[u.id] = u.role
-          }
-          // Aussi par email pour les anciens utilisateurs
-          if (u.email && u.role) {
-            localStorageRoles[u.email] = u.role
-          }
-        })
-      }
-      
-      // Aussi depuis la liste publique
-      const publicUsers = localStorage.getItem('workus_public_users')
-      if (publicUsers) {
-        const users = JSON.parse(publicUsers)
-        users.forEach((u: any) => {
-          if (u.id && u.role && !localStorageRoles[u.id]) {
-            localStorageRoles[u.id] = u.role
-          }
-        })
-      }
-    } catch {
-      // Ignorer
+  // Fonction pour charger les utilisateurs depuis Supabase
+  const loadUsersFromSupabase = useCallback(async (): Promise<DisplayUser[]> => {
+    if (!checkSupabase() || !supabase) {
+      return []
     }
 
-    if (Array.isArray(dbUsers) && dbUsers.length > 0) {
-      const displayUsers: DisplayUser[] = dbUsers.map(u => {
-        // Priorité au rôle de localStorage s'il existe
+    try {
+      const { data: profiles, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error('Erreur chargement profils Supabase:', error)
+        return []
+      }
+
+      if (!profiles) return []
+
+      return profiles.map((p: any) => ({
+        id: p.id,
+        username: p.username || 'Utilisateur',
+        email: p.email || '',
+        role: (p.role || 'user') as DisplayUser['role'],
+        isActive: p.is_active !== false,
+        isVerified: p.is_verified === true,
+        joinedAt: p.created_at || new Date().toISOString(),
+        avatar: p.avatar_url
+      }))
+    } catch (err) {
+      console.error('Erreur Supabase:', err)
+      return []
+    }
+  }, [])
+
+  // Charger tous les utilisateurs (Supabase + IndexedDB + localStorage)
+  const loadAllUsers = useCallback(async () => {
+    setIsLoadingUsers(true)
+    
+    try {
+      // 1. Charger depuis Supabase (source principale si configuré)
+      const supabaseUsers = await loadUsersFromSupabase()
+      
+      // 2. Récupérer les rôles depuis localStorage (pour les utilisateurs locaux)
+      let localStorageRoles: Record<string, string> = {}
+      try {
+        const registeredUsers = localStorage.getItem('workus_registered_users')
+        if (registeredUsers) {
+          const users = JSON.parse(registeredUsers)
+          users.forEach((u: any) => {
+            if (u.id && u.role) {
+              localStorageRoles[u.id] = u.role
+            }
+            if (u.email && u.role) {
+              localStorageRoles[u.email] = u.role
+            }
+          })
+        }
+        
+        const publicUsers = localStorage.getItem('workus_public_users')
+        if (publicUsers) {
+          const users = JSON.parse(publicUsers)
+          users.forEach((u: any) => {
+            if (u.id && u.role && !localStorageRoles[u.id]) {
+              localStorageRoles[u.id] = u.role
+            }
+          })
+        }
+      } catch {
+        // Ignorer
+      }
+
+      // 3. Convertir les utilisateurs IndexedDB
+      const localUsers: DisplayUser[] = Array.isArray(dbUsers) ? dbUsers.map(u => {
         const roleFromStorage = localStorageRoles[u.id] || localStorageRoles[u.email]
         const finalRole = (roleFromStorage || u.role) as DisplayUser['role']
         
@@ -140,14 +180,46 @@ export function AdminDashboard() {
           joinedAt: u.joinedAt,
           avatar: u.avatar
         }
-      })
-      
+      }) : []
+
+      // 4. Fusionner les utilisateurs (Supabase prioritaire, éviter les doublons)
+      const allUserIds = new Set<string>()
+      const allEmails = new Set<string>()
+      const mergedUsers: DisplayUser[] = []
+
+      // D'abord les utilisateurs Supabase
+      for (const user of supabaseUsers) {
+        if (!allUserIds.has(user.id) && !allEmails.has(user.email)) {
+          allUserIds.add(user.id)
+          allEmails.add(user.email)
+          mergedUsers.push(user)
+        }
+      }
+
+      // Puis les utilisateurs locaux (seulement s'ils n'existent pas dans Supabase)
+      for (const user of localUsers) {
+        if (!allUserIds.has(user.id) && !allEmails.has(user.email)) {
+          allUserIds.add(user.id)
+          allEmails.add(user.email)
+          mergedUsers.push(user)
+        }
+      }
+
       // Trier par date d'inscription (plus récent en premier)
-      displayUsers.sort((a, b) => new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime())
+      mergedUsers.sort((a, b) => new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime())
       
-      setAllUsers(displayUsers)
+      setAllUsers(mergedUsers)
+    } catch (err) {
+      console.error('Erreur chargement utilisateurs:', err)
+    } finally {
+      setIsLoadingUsers(false)
     }
-  }, [dbUsers])
+  }, [dbUsers, loadUsersFromSupabase])
+
+  // Charger les utilisateurs au démarrage et quand dbUsers change
+  useEffect(() => {
+    loadAllUsers()
+  }, [loadAllUsers])
 
   // Enregistrer le snapshot quotidien des utilisateurs
   useEffect(() => {
@@ -259,7 +331,25 @@ export function AdminDashboard() {
       return
     }
 
-    // 1. Mettre à jour dans localStorage (workus_registered_users)
+    // 1. Mettre à jour dans Supabase (source principale)
+    if (checkSupabase() && supabase) {
+      try {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ role: newRole, updated_at: new Date().toISOString() })
+          .eq('id', targetUser.id)
+        
+        if (error) {
+          console.error('Erreur mise à jour Supabase:', error)
+          displayToast('Erreur lors de la mise à jour dans Supabase', 'error')
+          return
+        }
+      } catch (err) {
+        console.error('Erreur Supabase:', err)
+      }
+    }
+
+    // 2. Mettre à jour dans localStorage (workus_registered_users)
     const stored = localStorage.getItem('workus_registered_users')
     if (stored) {
       try {
@@ -276,7 +366,7 @@ export function AdminDashboard() {
       }
     }
 
-    // 2. Mettre à jour dans la liste publique (workus_public_users)
+    // 3. Mettre à jour dans la liste publique (workus_public_users)
     try {
       const publicUsers = localStorage.getItem('workus_public_users')
       if (publicUsers) {
@@ -293,14 +383,14 @@ export function AdminDashboard() {
       // Ignorer
     }
 
-    // 3. Mettre à jour dans IndexedDB (base de données principale)
+    // 4. Mettre à jour dans IndexedDB (base de données locale)
     try {
       await userService.update(targetUser.id, { role: newRole })
     } catch (error) {
       console.error('Erreur mise à jour IndexedDB:', error)
     }
 
-    // 4. Si l'utilisateur modifié est actuellement connecté, mettre à jour sa session
+    // 5. Si l'utilisateur modifié est actuellement connecté, mettre à jour sa session
     try {
       const currentUserData = localStorage.getItem('workus_user')
       if (currentUserData) {
@@ -314,7 +404,7 @@ export function AdminDashboard() {
       // Ignorer
     }
 
-    // 5. Mettre à jour l'état local
+    // 6. Mettre à jour l'état local
     setAllUsers(prev => prev.map(u => {
       if (u.id === targetUser.id) {
         return { ...u, role: newRole }
@@ -771,9 +861,23 @@ export function AdminDashboard() {
         {activeTab === 'users' && (
           <div className="p-6 bg-dark-800/50 border border-dark-700/50 rounded-2xl">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-              <div>
-                <h2 className="text-lg font-bold text-white">Gestion des utilisateurs</h2>
-                <p className="text-sm text-dark-400">{allUsers.length} utilisateur{allUsers.length > 1 ? 's' : ''} au total</p>
+              <div className="flex items-center gap-3">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Gestion des utilisateurs</h2>
+                  <p className="text-sm text-dark-400">{allUsers.length} utilisateur{allUsers.length > 1 ? 's' : ''} au total</p>
+                </div>
+                <button
+                  onClick={() => loadAllUsers()}
+                  disabled={isLoadingUsers}
+                  className={`p-2 rounded-lg transition-colors ${
+                    isLoadingUsers 
+                      ? 'bg-dark-700 text-dark-400 cursor-not-allowed' 
+                      : 'bg-dark-700 text-dark-300 hover:bg-dark-600 hover:text-white'
+                  }`}
+                  title="Rafraîchir la liste"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingUsers ? 'animate-spin' : ''}`} />
+                </button>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="relative">
