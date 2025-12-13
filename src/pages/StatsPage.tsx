@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { 
   BarChart2, Clock, Target, Trophy, Flame, Calendar,
@@ -10,6 +10,11 @@ import { useUserData } from '../contexts/UserDataContext'
 
 type StatPeriod = 'week' | 'month' | 'year'
 
+interface DailyTimeRecord {
+  date: string // Format: YYYY-MM-DD
+  minutes: number
+}
+
 interface UserStatsData {
   totalHoursLearned: number
   skillsWorkedOn: number
@@ -18,87 +23,230 @@ interface UserStatsData {
   currentStreak: number
   longestStreak: number
   accountCreatedAt: string
-  periodProgress: {
-    hoursLearned: number
-    exercisesCompleted: number
-    newSkillsStarted: number
-  }
+  dailyTimeRecords: DailyTimeRecord[]
+  lastActiveDate: string
+  sessionStartTime: number // timestamp du début de session
 }
 
 const STATS_STORAGE_KEY = 'workus_user_stats'
+const SESSION_KEY = 'workus_session_start'
+const SESSION_DATE_KEY = 'workus_session_date'
+
+// Fonction pour obtenir la date d'aujourd'hui au format YYYY-MM-DD
+const getTodayDate = (): string => {
+  return new Date().toISOString().split('T')[0]
+}
+
+// Fonction pour obtenir une date passée
+const getPastDate = (daysAgo: number): string => {
+  const date = new Date()
+  date.setDate(date.getDate() - daysAgo)
+  return date.toISOString().split('T')[0]
+}
+
+// Fonction pour formater une date en français
+const formatDateFr = (dateStr: string, format: 'short' | 'medium' | 'long' = 'medium'): string => {
+  const date = new Date(dateStr)
+  const options: Intl.DateTimeFormatOptions = format === 'short' 
+    ? { day: 'numeric', month: 'short' }
+    : format === 'long'
+    ? { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }
+    : { day: 'numeric', month: 'long' }
+  return date.toLocaleDateString('fr-FR', options)
+}
+
+// Fonction pour formater les minutes en heures et minutes
+const formatTime = (minutes: number): string => {
+  if (minutes === 0) return '0 min'
+  const hours = Math.floor(minutes / 60)
+  const mins = Math.round(minutes % 60)
+  if (hours === 0) return `${mins} min`
+  if (mins === 0) return `${hours}h`
+  return `${hours}h ${mins}m`
+}
 
 /**
  * StatsPage - Statistiques détaillées de l'utilisateur
- * Avec filtre par période et date de création du compte
+ * Avec suivi du temps réel et historique persistant
  */
 export function StatsPage() {
   const { user } = useAuth()
-  const { data, getWeeklyActivity, getTodayActivity } = useUserData()
+  const { data } = useUserData()
   const [period, setPeriod] = useState<StatPeriod>('week')
+  const [hoveredBar, setHoveredBar] = useState<number | null>(null)
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 })
+  const sessionStartRef = useRef<number>(Date.now())
+  const lastSaveRef = useRef<number>(Date.now())
   
-  // Charger ou initialiser les stats
-  const [userStats, setUserStats] = useState<UserStatsData>(() => {
+  // Charger les stats depuis localStorage
+  const loadStats = useCallback((): UserStatsData => {
+    const today = getTodayDate()
+    
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem(STATS_STORAGE_KEY)
       if (stored) {
         try {
           const parsed = JSON.parse(stored)
-          // Vérifier si les stats appartiennent à l'utilisateur connecté
-          if (parsed.userId === user?.id) {
-            return parsed.stats
+          // Charger les stats (on vérifie l'userId après)
+          if (parsed.stats) {
+            // Gérer la session - vérifier si c'est une nouvelle session (nouveau jour ou première visite)
+            const storedSessionDate = localStorage.getItem(SESSION_DATE_KEY)
+            const storedSessionStart = localStorage.getItem(SESSION_KEY)
+            
+            let startTime: number
+            
+            if (storedSessionDate === today && storedSessionStart) {
+              // Même jour, continuer la session existante
+              startTime = parseInt(storedSessionStart)
+            } else {
+              // Nouveau jour ou première session
+              startTime = Date.now()
+              localStorage.setItem(SESSION_KEY, startTime.toString())
+              localStorage.setItem(SESSION_DATE_KEY, today)
+            }
+            
+            sessionStartRef.current = startTime
+            
+            return {
+              ...parsed.stats,
+              sessionStartTime: startTime
+            }
           }
         } catch {
-          // Ignorer
+          // Ignorer les erreurs de parsing
         }
       }
     }
     
     // Initialiser les stats pour un nouvel utilisateur
+    const newSessionStart = Date.now()
+    sessionStartRef.current = newSessionStart
+    localStorage.setItem(SESSION_KEY, newSessionStart.toString())
+    localStorage.setItem(SESSION_DATE_KEY, today)
+    
     return {
       totalHoursLearned: 0,
       skillsWorkedOn: 0,
       exercisesCompleted: 0,
       achievementsUnlocked: 0,
-      currentStreak: 0,
-      longestStreak: 0,
+      currentStreak: 1,
+      longestStreak: 1,
       accountCreatedAt: user?.createdAt || new Date().toISOString(),
-      periodProgress: {
-        hoursLearned: 0,
-        exercisesCompleted: 0,
-        newSkillsStarted: 0
-      }
+      dailyTimeRecords: [{
+        date: today,
+        minutes: 0
+      }],
+      lastActiveDate: today,
+      sessionStartTime: newSessionStart
     }
-  })
+  }, [user?.createdAt])
 
-  // Sauvegarder automatiquement les stats
+  const [userStats, setUserStats] = useState<UserStatsData>(loadStats)
+  
+  // Recharger les stats si l'utilisateur change
   useEffect(() => {
-    if (user) {
-      localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
-        userId: user.id,
-        stats: userStats
-      }))
+    setUserStats(loadStats())
+  }, [user?.id, loadStats])
+
+  // Sauvegarder le temps passé
+  const saveTimeSpent = useCallback(() => {
+    const now = Date.now()
+    const timeSinceLastSave = Math.round((now - lastSaveRef.current) / 1000 / 60) // en minutes depuis dernière sauvegarde
+    const today = getTodayDate()
+    
+    // Ne sauvegarder que si du temps s'est écoulé
+    if (timeSinceLastSave <= 0) return
+    
+    setUserStats(prev => {
+      // Trouver ou créer l'enregistrement d'aujourd'hui
+      const existingIndex = prev.dailyTimeRecords.findIndex(r => r.date === today)
+      let newRecords = [...prev.dailyTimeRecords]
+      
+      if (existingIndex >= 0) {
+        // Ajouter le temps depuis la dernière sauvegarde
+        newRecords[existingIndex] = {
+          date: today,
+          minutes: newRecords[existingIndex].minutes + timeSinceLastSave
+        }
+      } else {
+        // Nouveau jour - ajouter un nouvel enregistrement
+        newRecords.push({
+          date: today,
+          minutes: timeSinceLastSave
+        })
+      }
+      
+      // Garder seulement les 365 derniers jours
+      if (newRecords.length > 365) {
+        newRecords = newRecords.slice(-365)
+      }
+      
+      // Calculer le temps total
+      const totalMinutes = newRecords.reduce((sum, r) => sum + r.minutes, 0)
+      
+      // Calculer la série (streak)
+      let streak = 0
+      for (let i = 0; i <= 365; i++) {
+        const checkDate = getPastDate(i)
+        const record = newRecords.find(r => r.date === checkDate)
+        if (record && record.minutes > 0) {
+          streak++
+        } else if (i > 0) { // On ne casse pas la série si c'est aujourd'hui sans activité
+          break
+        }
+      }
+      
+      return {
+        ...prev,
+        dailyTimeRecords: newRecords,
+        totalHoursLearned: Math.round(totalMinutes / 60 * 10) / 10,
+        lastActiveDate: today,
+        currentStreak: streak,
+        longestStreak: Math.max(prev.longestStreak, streak)
+      }
+    })
+    
+    lastSaveRef.current = now
+  }, [])
+
+  // Sauvegarder automatiquement toutes les 30 secondes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      saveTimeSpent()
+    }, 30000) // 30 secondes
+    
+    // Sauvegarder quand on quitte la page
+    const handleBeforeUnload = () => {
+      saveTimeSpent()
     }
+    
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      saveTimeSpent() // Sauvegarder en quittant le composant
+    }
+  }, [saveTimeSpent])
+
+  // Sauvegarder les stats dans localStorage
+  useEffect(() => {
+    // Toujours sauvegarder, même sans utilisateur connecté
+    localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
+      userId: user?.id || 'anonymous',
+      stats: userStats,
+      lastSaved: Date.now()
+    }))
   }, [userStats, user])
 
-  // Calculer les stats basées sur les données utilisateur
+  // Mettre à jour les compétences depuis UserData
   useEffect(() => {
     const skillsCount = Object.keys(data.skillProgress || {}).length
-    
-    // Calculer le temps total passé sur le site (en heures)
-    const weeklyActivity = getWeeklyActivity()
-    const totalMinutes = weeklyActivity.reduce((sum, day) => sum + day.timeSpentMinutes, 0)
-    const totalHours = Math.round(totalMinutes / 60 * 10) / 10 // Arrondi à 1 décimale
-    
     setUserStats(prev => ({
       ...prev,
-      skillsWorkedOn: skillsCount,
-      totalHoursLearned: totalHours,
-      periodProgress: {
-        ...prev.periodProgress,
-        hoursLearned: Math.round(getTodayActivity() / 60 * 10) / 10
-      }
+      skillsWorkedOn: skillsCount
     }))
-  }, [data, getWeeklyActivity, getTodayActivity])
+  }, [data])
 
   // Obtenir les skills de l'utilisateur avec leur progression
   const userSkillsWithDetails = Object.entries(data.skillProgress || {}).map(([skillId, progress]) => ({
@@ -139,13 +287,93 @@ export function StatsPage() {
     year: 'Cette année'
   }
 
-  // Générer des données d'activité (simulées pour l'instant)
-  const getActivityData = () => {
-    const count = period === 'week' ? 7 : period === 'month' ? 30 : 52
-    return Array.from({ length: count }).map(() => Math.random() * 100)
-  }
+  // Générer les données d'activité réelles pour la période sélectionnée
+  const getActivityData = useCallback(() => {
+    const count = period === 'week' ? 7 : period === 'month' ? 30 : 365
+    const data: { date: string; minutes: number; label: string }[] = []
+    
+    for (let i = count - 1; i >= 0; i--) {
+      const date = getPastDate(i)
+      const record = userStats.dailyTimeRecords.find(r => r.date === date)
+      const minutes = record?.minutes || 0
+      
+      // Formater le label selon la période
+      let label: string
+      if (period === 'week') {
+        const d = new Date(date)
+        const dayNames = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
+        label = `${dayNames[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`
+      } else if (period === 'month') {
+        label = formatDateFr(date, 'short')
+      } else {
+        label = formatDateFr(date, 'medium')
+      }
+      
+      data.push({ date, minutes, label })
+    }
+    
+    return data
+  }, [period, userStats.dailyTimeRecords])
 
   const activityData = getActivityData()
+  
+  // Calculer la hauteur max pour normaliser les barres
+  const maxMinutes = Math.max(...activityData.map(d => d.minutes), 1)
+  
+  // Calculer les stats de la période sélectionnée
+  const getPeriodStats = useCallback(() => {
+    const count = period === 'week' ? 7 : period === 'month' ? 30 : 365
+    let totalMinutes = 0
+    let daysActive = 0
+    
+    for (let i = 0; i < count; i++) {
+      const date = getPastDate(i)
+      const record = userStats.dailyTimeRecords.find(r => r.date === date)
+      if (record && record.minutes > 0) {
+        totalMinutes += record.minutes
+        daysActive++
+      }
+    }
+    
+    return {
+      totalMinutes,
+      daysActive,
+      averagePerDay: daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0
+    }
+  }, [period, userStats.dailyTimeRecords])
+  
+  const periodStats = getPeriodStats()
+
+  // Temps passé aujourd'hui (en temps réel)
+  const getTodayTime = useCallback(() => {
+    const today = getTodayDate()
+    const record = userStats.dailyTimeRecords.find(r => r.date === today)
+    const savedMinutes = record?.minutes || 0
+    // Ajouter le temps depuis la dernière sauvegarde (pas depuis le début de session)
+    const minutesSinceLastSave = Math.round((Date.now() - lastSaveRef.current) / 1000 / 60)
+    return savedMinutes + Math.max(0, minutesSinceLastSave)
+  }, [userStats.dailyTimeRecords])
+
+  const [todayTime, setTodayTime] = useState(getTodayTime())
+  
+  // Mettre à jour le temps d'aujourd'hui en temps réel
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTodayTime(getTodayTime())
+    }, 1000) // Chaque seconde
+    
+    return () => clearInterval(interval)
+  }, [getTodayTime])
+
+  // Gérer le survol des barres
+  const handleBarHover = (index: number, event: React.MouseEvent) => {
+    setHoveredBar(index)
+    const rect = event.currentTarget.getBoundingClientRect()
+    setTooltipPosition({
+      x: rect.left + rect.width / 2,
+      y: rect.top - 10
+    })
+  }
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -205,9 +433,10 @@ export function StatsPage() {
           animate={{ opacity: 1, y: 0 }}
         >
           <StatCard
-            label="Heures d'apprentissage"
+            label="Temps total sur le site"
             value={`${userStats.totalHoursLearned}h`}
-            change={0}
+            change={todayTime > 0 ? 1 : 0}
+            changeLabel={`+${formatTime(todayTime)} aujourd'hui`}
             icon={<Clock className="w-6 h-6 text-white" />}
             gradient="from-primary-500 to-cyan-500"
           />
@@ -220,7 +449,7 @@ export function StatsPage() {
           <StatCard
             label="Compétences travaillées"
             value={userStats.skillsWorkedOn}
-            change={0}
+            change={userStats.skillsWorkedOn > 0 ? 1 : 0}
             icon={<Target className="w-6 h-6 text-white" />}
             gradient="from-secondary-500 to-pink-500"
           />
@@ -267,7 +496,7 @@ export function StatsPage() {
             </div>
             <div>
               <p className="text-dark-400 text-sm">Série actuelle</p>
-              <p className="text-4xl font-bold text-white">{userStats.currentStreak} jours</p>
+              <p className="text-4xl font-bold text-white">{userStats.currentStreak} jour{userStats.currentStreak > 1 ? 's' : ''}</p>
             </div>
           </div>
           <div className="text-right">
@@ -276,18 +505,32 @@ export function StatsPage() {
           </div>
         </div>
         
-        {/* Weekly calendar */}
+        {/* Weekly calendar - 7 derniers jours */}
         <div className="mt-6 flex items-center justify-between">
-          {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((day, i) => (
-            <div key={i} className="text-center">
-              <p className="text-sm text-dark-400 mb-2">{day}</p>
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                i < userStats.currentStreak % 7 ? 'bg-amber-500 text-white' : 'bg-dark-700 text-dark-400'
-              }`}>
-                {i < userStats.currentStreak % 7 ? '✓' : ''}
+          {Array.from({ length: 7 }).map((_, i) => {
+            const date = getPastDate(6 - i)
+            const d = new Date(date)
+            const dayNames = ['D', 'L', 'M', 'M', 'J', 'V', 'S']
+            const record = userStats.dailyTimeRecords.find(r => r.date === date)
+            const hasActivity = record && record.minutes > 0
+            const isToday = date === getTodayDate()
+            
+            return (
+              <div key={i} className="text-center">
+                <p className="text-sm text-dark-400 mb-2">{dayNames[d.getDay()]}</p>
+                <div 
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                    hasActivity || (isToday && todayTime > 0)
+                      ? 'bg-amber-500 text-white' 
+                      : 'bg-dark-700 text-dark-400'
+                  } ${isToday ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-dark-800' : ''}`}
+                  title={`${formatDateFr(date, 'long')} - ${formatTime(record?.minutes || (isToday ? todayTime : 0))}`}
+                >
+                  {(hasActivity || (isToday && todayTime > 0)) ? '✓' : d.getDate()}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </motion.div>
 
@@ -348,21 +591,21 @@ export function StatsPage() {
               <span className="text-sm text-dark-400">{periodLabels[period]}</span>
               <span className="flex items-center gap-1 text-accent-400">
                 <TrendingUp className="w-4 h-4" />
-                {userStats.periodProgress.hoursLearned}h
+                {formatTime(periodStats.totalMinutes)}
               </span>
             </div>
             <div className="grid grid-cols-3 gap-4 text-center">
               <div className="p-4 bg-dark-800/50 rounded-xl">
-                <p className="text-2xl font-bold text-white">{userStats.periodProgress.hoursLearned}</p>
-                <p className="text-xs text-dark-400 mt-1">Heures</p>
+                <p className="text-2xl font-bold text-white">{formatTime(periodStats.totalMinutes)}</p>
+                <p className="text-xs text-dark-400 mt-1">Temps total</p>
               </div>
               <div className="p-4 bg-dark-800/50 rounded-xl">
-                <p className="text-2xl font-bold text-white">{userStats.periodProgress.exercisesCompleted}</p>
-                <p className="text-xs text-dark-400 mt-1">Exercices</p>
+                <p className="text-2xl font-bold text-white">{periodStats.daysActive}</p>
+                <p className="text-xs text-dark-400 mt-1">Jours actifs</p>
               </div>
               <div className="p-4 bg-dark-800/50 rounded-xl">
-                <p className="text-2xl font-bold text-white">{userStats.periodProgress.newSkillsStarted}</p>
-                <p className="text-xs text-dark-400 mt-1">Nouvelles compétences</p>
+                <p className="text-2xl font-bold text-white">{formatTime(periodStats.averagePerDay)}</p>
+                <p className="text-xs text-dark-400 mt-1">Moyenne/jour</p>
               </div>
             </div>
           </div>
@@ -374,26 +617,64 @@ export function StatsPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.7 }}
-        className="mt-8 p-6 bg-dark-800/50 border border-dark-700/50 rounded-2xl"
+        className="mt-8 p-6 bg-dark-800/50 border border-dark-700/50 rounded-2xl relative"
       >
         <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
           <BookOpen className="w-5 h-5 text-secondary-400" />
           Activité - {periodLabels[period]}
         </h2>
-        <div className="h-32 flex items-end justify-between gap-1">
-          {activityData.map((height, i) => (
-            <div
-              key={i}
-              className={`flex-1 rounded-t transition-all hover:bg-primary-400 ${
-                height > 60 ? 'bg-primary-500' : height > 30 ? 'bg-primary-600' : 'bg-dark-600'
-              }`}
-              style={{ height: `${Math.max(height, 10)}%` }}
-            />
-          ))}
+        
+        {/* Tooltip */}
+        {hoveredBar !== null && (
+          <div 
+            className="fixed z-50 px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg shadow-xl pointer-events-none transform -translate-x-1/2 -translate-y-full"
+            style={{ 
+              left: tooltipPosition.x, 
+              top: tooltipPosition.y - 8
+            }}
+          >
+            <p className="text-xs text-dark-400">{activityData[hoveredBar]?.label}</p>
+            <p className="text-sm font-bold text-white">{formatTime(activityData[hoveredBar]?.minutes || 0)}</p>
+          </div>
+        )}
+        
+        <div className="h-40 flex items-end justify-between gap-1">
+          {activityData.map((data, i) => {
+            const height = maxMinutes > 0 ? (data.minutes / maxMinutes) * 100 : 0
+            const isToday = data.date === getTodayDate()
+            
+            return (
+              <div
+                key={i}
+                className={`flex-1 rounded-t cursor-pointer transition-all duration-200 ${
+                  hoveredBar === i 
+                    ? 'bg-primary-400 scale-110' 
+                    : isToday
+                    ? 'bg-primary-400'
+                    : data.minutes > 0 
+                    ? 'bg-primary-500 hover:bg-primary-400' 
+                    : 'bg-dark-600 hover:bg-dark-500'
+                }`}
+                style={{ height: `${Math.max(height, 4)}%` }}
+                onMouseEnter={(e) => handleBarHover(i, e)}
+                onMouseLeave={() => setHoveredBar(null)}
+                title={`${data.label}: ${formatTime(data.minutes)}`}
+              />
+            )
+          })}
         </div>
-        <div className="flex justify-between mt-2 text-xs text-dark-500">
-          <span>{period === 'week' ? '7 jours' : period === 'month' ? '30 jours' : '52 semaines'}</span>
-          <span>Aujourd'hui</span>
+        <div className="flex justify-between mt-4 text-xs text-dark-500">
+          <span>
+            {period === 'week' 
+              ? formatDateFr(getPastDate(6), 'short')
+              : period === 'month' 
+              ? formatDateFr(getPastDate(29), 'short')
+              : formatDateFr(getPastDate(364), 'short')
+            }
+          </span>
+          <span className="text-primary-400 font-medium">
+            Aujourd'hui ({formatDateFr(getTodayDate(), 'short')})
+          </span>
         </div>
       </motion.section>
     </div>

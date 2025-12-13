@@ -9,15 +9,32 @@
       "bio": "Administrateur Work Us",
       "isActive": true,
       "isVerified": true,
-      "joinedAt": "2024-12-12T00:00:00Z",
-      "lastLoginAt": "2024-12-12T00:00:00Z",
+      "joinedAt": "2024-12-01T00:00:00Z",
+      "lastLoginAt": "2024-12-13T00:00:00Z",
       "skills": [],
       "followers": 0,
       "following": 0,
       "savedContent": []
+    },
+    {
+      "id": "creator-1",
+      "username": "Sophie",
+      "email": "sophie@workus.com",
+      "role": "creator",
+      "avatar": null,
+      "bio": "Créatrice de contenu sur Work Us",
+      "isActive": true,
+      "isVerified": true,
+      "joinedAt": "2024-12-05T00:00:00Z",
+      "lastLoginAt": "2024-12-13T00:00:00Z",
+      "skills": ["Développement web", "Design UX/UI"],
+      "followers": 150,
+      "following": 25,
+      "savedContent": []
     }
   ],
   "passwords": {
-    "admin-1": "admin123"
+    "admin-1": "admin123",
+    "creator-1": "creator123"
   }
 }

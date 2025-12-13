@@ -108,8 +108,8 @@ export function AdminDashboard() {
   const { categories, specialties } = useContentManagement()
   const { posts } = usePosts()
   const { reports: contextReports, getPendingCount } = useReports()
-  const { stats: adminStats, getStatsForPeriod } = useAdminStats()
-  const { activities, addActivity, getRecentActivities } = useActivity()
+  const { stats: adminStats, getStatsForPeriod, getUserEvolution, recordDailySnapshot } = useAdminStats()
+  const { activities, getRecentActivities, getActivityTimeStats, recordGlobalActivity, userActivities } = useActivity()
 
   // Fonction pour charger tous les utilisateurs
   const loadAllUsers = () => {
@@ -139,10 +139,53 @@ export function AdminDashboard() {
     setAllUsers(combined)
   }
 
-  // Charger tous les utilisateurs au démarrage et quand on change d'onglet
+  // Charger tous les utilisateurs au démarrage et rafraîchir en temps réel
   useEffect(() => {
     loadAllUsers()
+    
+    // Rafraîchir la liste des utilisateurs toutes les 3 secondes pour voir les nouveaux inscrits
+    const interval = setInterval(() => {
+      loadAllUsers()
+    }, 3000)
+    
+    // Écouter les changements dans localStorage (quand un autre onglet modifie les données)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'workus_registered_users') {
+        loadAllUsers()
+      }
+    }
+    window.addEventListener('storage', handleStorageChange)
+    
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('storage', handleStorageChange)
+    }
   }, [activeTab])
+
+  // Enregistrer le snapshot quotidien des utilisateurs
+  useEffect(() => {
+    if (allUsers.length > 0) {
+      recordDailySnapshot(allUsers.length)
+    }
+  }, [allUsers.length, recordDailySnapshot])
+
+  // Enregistrer l'activité globale quotidienne
+  useEffect(() => {
+    // Calculer le temps total et le nombre d'utilisateurs actifs
+    const activeUsersList = Object.values(userActivities)
+    const activeUsersCount = activeUsersList.filter(u => {
+      const lastActive = new Date(u.lastActive)
+      const now = new Date()
+      // Considéré actif si dernière activité dans les dernières 24h
+      return (now.getTime() - lastActive.getTime()) < 24 * 60 * 60 * 1000
+    }).length
+    
+    const totalMinutes = activeUsersList.reduce((sum, u) => sum + (u.totalTime || 0), 0)
+    
+    if (activeUsersCount > 0 || totalMinutes > 0) {
+      recordGlobalActivity(totalMinutes, Math.max(activeUsersCount, allUsers.length))
+    }
+  }, [userActivities, allUsers.length, recordGlobalActivity])
 
   // Filtrer les utilisateurs
   const filteredUsers = allUsers.filter(u => {
@@ -445,31 +488,98 @@ export function AdminDashboard() {
             </div>
 
             {/* Stats grid - Évolution dynamique */}
-            <div className="grid md:grid-cols-3 gap-4">
-              <StatCard
-                label="Utilisateurs totaux"
-                value={totalUsers.toLocaleString()}
-                change={periodStats.users}
-                changeLabel={calculateEvolution(periodStats.users, periodStats.previousUsers)}
-                icon={<Users className="w-6 h-6 text-white" />}
-                gradient="from-blue-500 to-cyan-500"
-              />
-              <StatCard
-                label="Créateurs"
-                value={totalCreators}
-                change={periodStats.creators}
-                changeLabel={calculateEvolution(periodStats.creators, periodStats.previousCreators)}
-                icon={<UserPlus className="w-6 h-6 text-white" />}
-                gradient="from-purple-500 to-pink-500"
-              />
-              <StatCard
-                label="Contenus publiés"
-                value={totalContent}
-                change={periodStats.content}
-                changeLabel={periodStats.content > 0 ? `+${periodStats.content} cette période` : '0 cette période'}
-                icon={<FileText className="w-6 h-6 text-white" />}
-                gradient="from-green-500 to-emerald-500"
-              />
+            {(() => {
+              const evolution = getUserEvolution()
+              // Sélectionner l'évolution en fonction de la période choisie
+              const selectedEvolution = statPeriod === 'week' ? evolution.week :
+                                        statPeriod === 'month' ? evolution.month : evolution.year
+              const periodLabel = statPeriod === 'week' ? 'cette semaine' :
+                                  statPeriod === 'month' ? 'ce mois' : 'cette année'
+              
+              return (
+                <div className="grid md:grid-cols-3 gap-4">
+                  <StatCard
+                    label="Utilisateurs totaux"
+                    value={totalUsers.toLocaleString()}
+                    change={selectedEvolution.trend === 'up' ? 1 : selectedEvolution.trend === 'down' ? -1 : 0}
+                    changeLabel={`${selectedEvolution.percentage} (${selectedEvolution.current} nouveaux ${periodLabel})`}
+                    icon={<Users className="w-6 h-6 text-white" />}
+                    gradient="from-blue-500 to-cyan-500"
+                  />
+                  <StatCard
+                    label="Créateurs"
+                    value={totalCreators}
+                    change={totalCreators > 0 ? 1 : 0}
+                    changeLabel={`${totalCreators} créateur${totalCreators > 1 ? 's' : ''} actif${totalCreators > 1 ? 's' : ''}`}
+                    icon={<UserPlus className="w-6 h-6 text-white" />}
+                    gradient="from-purple-500 to-pink-500"
+                  />
+                  <StatCard
+                    label="Contenus publiés"
+                    value={totalContent}
+                    change={periodStats.content > 0 ? 1 : 0}
+                    changeLabel={periodStats.content > 0 ? `+${periodStats.content} ${periodLabel}` : `0 ${periodLabel}`}
+                    icon={<FileText className="w-6 h-6 text-white" />}
+                    gradient="from-green-500 to-emerald-500"
+                  />
+                </div>
+              )
+            })()}
+
+            {/* Temps d'activité moyen par utilisateur */}
+            <div className="p-6 bg-dark-800/50 border border-dark-700/50 rounded-2xl">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-primary-400" />
+                  Temps d'activité moyen par utilisateur
+                </h3>
+                <span className="text-xs text-dark-400">Mise à jour en temps réel</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {(() => {
+                  const activityStats = getActivityTimeStats()
+                  
+                  // Fonction pour formater le temps en heures et minutes
+                  const formatTime = (minutes: number): string => {
+                    if (minutes === 0) return '0 min'
+                    const hours = Math.floor(minutes / 60)
+                    const mins = minutes % 60
+                    if (hours === 0) return `${mins} min`
+                    if (mins === 0) return `${hours}h`
+                    return `${hours}h ${mins}m`
+                  }
+                  
+                  const periods = [
+                    { key: 'day', label: 'Aujourd\'hui', data: activityStats.day, vsLabel: 'hier', gradient: 'from-blue-500 to-cyan-500' },
+                    { key: 'week', label: 'Cette semaine', data: activityStats.week, vsLabel: 'sem. préc.', gradient: 'from-purple-500 to-pink-500' },
+                    { key: 'month', label: 'Ce mois', data: activityStats.month, vsLabel: 'mois préc.', gradient: 'from-green-500 to-emerald-500' },
+                    { key: 'year', label: 'Cette année', data: activityStats.year, vsLabel: 'année préc.', gradient: 'from-orange-500 to-amber-500' }
+                  ]
+                  
+                  return periods.map(period => (
+                    <div key={period.key} className="p-4 bg-dark-700/50 rounded-xl border border-dark-600/50 hover:border-dark-500/50 transition-colors">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs text-dark-400">{period.label}</p>
+                        <div className={`w-2 h-2 rounded-full bg-gradient-to-r ${period.gradient}`} />
+                      </div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-bold text-white">{formatTime(period.data.average)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className={`text-sm font-medium ${
+                          period.data.trend === 'up' ? 'text-green-400' :
+                          period.data.trend === 'down' ? 'text-red-400' : 'text-dark-400'
+                        }`}>
+                          {period.data.trend === 'up' ? '↑' : period.data.trend === 'down' ? '↓' : '–'} {period.data.percentage}
+                        </span>
+                      </div>
+                      <p className="text-xs text-dark-500 mt-1">
+                        vs {formatTime(period.data.previous)} {period.vsLabel}
+                      </p>
+                    </div>
+                  ))
+                })()}
+              </div>
             </div>
 
             {/* Statistiques supplémentaires */}

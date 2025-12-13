@@ -3,6 +3,14 @@ import { createContext, useContext, useState, useEffect, ReactNode, useCallback 
 /**
  * Types pour les statistiques admin
  */
+
+// Historique quotidien des utilisateurs
+export interface DailyUserRecord {
+  date: string // Format: YYYY-MM-DD
+  totalUsers: number
+  newUsers: number
+}
+
 export interface AdminStats {
   totalUsers: number
   totalCreators: number
@@ -11,12 +19,16 @@ export interface AdminStats {
   newUsersThisWeek: number
   newUsersThisMonth: number
   newUsersThisYear: number
+  newUsersToday: number
   contentThisWeek: number
   contentThisMonth: number
   contentThisYear: number
   viewsThisWeek: number
   viewsThisMonth: number
   viewsThisYear: number
+  // Historique pour calcul des évolutions
+  userHistory: DailyUserRecord[]
+  lastRecordedDate: string
 }
 
 export interface PeriodStats {
@@ -28,6 +40,14 @@ export interface PeriodStats {
   previousContent: number
   views: number
   previousViews: number
+}
+
+// Évolution des utilisateurs par période
+export interface UserEvolution {
+  day: { current: number; previous: number; percentage: string; trend: 'up' | 'down' | 'stable' }
+  week: { current: number; previous: number; percentage: string; trend: 'up' | 'down' | 'stable' }
+  month: { current: number; previous: number; percentage: string; trend: 'up' | 'down' | 'stable' }
+  year: { current: number; previous: number; percentage: string; trend: 'up' | 'down' | 'stable' }
 }
 
 interface AdminStatsContextType {
@@ -46,9 +66,23 @@ interface AdminStatsContextType {
   resetMonthlyStats: () => void
   resetYearlyStats: () => void
   getStatsForPeriod: (period: 'week' | 'month' | 'year') => PeriodStats
+  getUserEvolution: () => UserEvolution
+  recordDailySnapshot: (totalUsers: number) => void
 }
 
 const STORAGE_KEY = 'workus_admin_stats'
+
+// Fonction pour obtenir la date d'aujourd'hui au format YYYY-MM-DD
+const getTodayDate = (): string => {
+  return new Date().toISOString().split('T')[0]
+}
+
+// Fonction pour obtenir une date passée
+const getPastDate = (daysAgo: number): string => {
+  const date = new Date()
+  date.setDate(date.getDate() - daysAgo)
+  return date.toISOString().split('T')[0]
+}
 
 const defaultStats: AdminStats = {
   totalUsers: 0,
@@ -58,12 +92,15 @@ const defaultStats: AdminStats = {
   newUsersThisWeek: 0,
   newUsersThisMonth: 0,
   newUsersThisYear: 0,
+  newUsersToday: 0,
   contentThisWeek: 0,
   contentThisMonth: 0,
   contentThisYear: 0,
   viewsThisWeek: 0,
   viewsThisMonth: 0,
-  viewsThisYear: 0
+  viewsThisYear: 0,
+  userHistory: [],
+  lastRecordedDate: ''
 }
 
 const AdminStatsContext = createContext<AdminStatsContextType | undefined>(undefined)
@@ -244,6 +281,112 @@ export function AdminStatsProvider({ children }: { children: ReactNode }) {
     }
   }, [stats])
 
+  // Enregistrer un snapshot quotidien des utilisateurs
+  const recordDailySnapshot = useCallback((totalUsers: number) => {
+    const today = getTodayDate()
+    
+    setStats(prev => {
+      // Si on a déjà enregistré aujourd'hui, mettre à jour
+      const existingIndex = prev.userHistory.findIndex(r => r.date === today)
+      let newHistory = [...prev.userHistory]
+      
+      if (existingIndex >= 0) {
+        // Mettre à jour l'enregistrement existant
+        const yesterdayRecord = prev.userHistory.find(r => r.date === getPastDate(1))
+        const previousTotal = yesterdayRecord?.totalUsers || 0
+        newHistory[existingIndex] = {
+          date: today,
+          totalUsers: totalUsers,
+          newUsers: Math.max(0, totalUsers - previousTotal)
+        }
+      } else {
+        // Ajouter un nouvel enregistrement
+        const yesterdayRecord = prev.userHistory.find(r => r.date === getPastDate(1))
+        const previousTotal = yesterdayRecord?.totalUsers || prev.totalUsers
+        newHistory.push({
+          date: today,
+          totalUsers: totalUsers,
+          newUsers: Math.max(0, totalUsers - previousTotal)
+        })
+      }
+      
+      // Garder seulement les 365 derniers jours
+      if (newHistory.length > 365) {
+        newHistory = newHistory.slice(-365)
+      }
+      
+      return {
+        ...prev,
+        totalUsers: totalUsers,
+        userHistory: newHistory,
+        lastRecordedDate: today
+      }
+    })
+  }, [])
+
+  // Calculer l'évolution des utilisateurs par période
+  const getUserEvolution = useCallback((): UserEvolution => {
+    const history = stats.userHistory
+    const today = getTodayDate()
+    
+    // Fonction helper pour calculer l'évolution
+    const calculateEvolution = (current: number, previous: number): { percentage: string; trend: 'up' | 'down' | 'stable' } => {
+      if (previous === 0) {
+        return { 
+          percentage: current > 0 ? '+100%' : '0%', 
+          trend: current > 0 ? 'up' : 'stable' 
+        }
+      }
+      const evolution = ((current - previous) / previous) * 100
+      return {
+        percentage: evolution >= 0 ? `+${evolution.toFixed(1)}%` : `${evolution.toFixed(1)}%`,
+        trend: evolution > 0 ? 'up' : evolution < 0 ? 'down' : 'stable'
+      }
+    }
+    
+    // Fonction pour obtenir les nouveaux utilisateurs sur une période
+    const getNewUsersInRange = (startDaysAgo: number, endDaysAgo: number): number => {
+      let total = 0
+      for (let i = endDaysAgo; i <= startDaysAgo; i++) {
+        const dateStr = getPastDate(i)
+        const record = history.find(r => r.date === dateStr)
+        if (record) {
+          total += record.newUsers
+        }
+      }
+      return total
+    }
+    
+    // Aujourd'hui vs Hier
+    const todayRecord = history.find(r => r.date === today)
+    const yesterdayRecord = history.find(r => r.date === getPastDate(1))
+    const todayNewUsers = todayRecord?.newUsers || stats.newUsersToday
+    const yesterdayNewUsers = yesterdayRecord?.newUsers || 0
+    const dayEvolution = calculateEvolution(todayNewUsers, yesterdayNewUsers)
+    
+    // Cette semaine vs Semaine précédente (7 derniers jours vs 7 jours avant)
+    const thisWeekUsers = getNewUsersInRange(6, 0) || stats.newUsersThisWeek
+    const lastWeekUsers = getNewUsersInRange(13, 7)
+    const weekEvolution = calculateEvolution(thisWeekUsers, lastWeekUsers)
+    
+    // Ce mois vs Mois précédent (30 derniers jours vs 30 jours avant)
+    const thisMonthUsers = getNewUsersInRange(29, 0) || stats.newUsersThisMonth
+    const lastMonthUsers = getNewUsersInRange(59, 30)
+    const monthEvolution = calculateEvolution(thisMonthUsers, lastMonthUsers)
+    
+    // Cette année vs Année précédente (365 derniers jours vs 365 jours avant)
+    const thisYearUsers = getNewUsersInRange(364, 0) || stats.newUsersThisYear
+    const lastYearUsers = getNewUsersInRange(729, 365)
+    const yearEvolution = calculateEvolution(thisYearUsers, lastYearUsers)
+    
+    return {
+      day: { current: todayNewUsers, previous: yesterdayNewUsers, ...dayEvolution },
+      week: { current: thisWeekUsers, previous: lastWeekUsers, ...weekEvolution },
+      month: { current: thisMonthUsers, previous: lastMonthUsers, ...monthEvolution },
+      year: { current: thisYearUsers, previous: lastYearUsers, ...yearEvolution }
+    }
+  }, [stats])
+
   const value: AdminStatsContextType = {
     stats,
     incrementUsers,
@@ -259,7 +402,9 @@ export function AdminStatsProvider({ children }: { children: ReactNode }) {
     resetWeeklyStats,
     resetMonthlyStats,
     resetYearlyStats,
-    getStatsForPeriod
+    getStatsForPeriod,
+    getUserEvolution,
+    recordDailySnapshot
   }
 
   return (
