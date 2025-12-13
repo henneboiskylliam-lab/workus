@@ -374,17 +374,22 @@ export function AdminDashboard() {
       return
     }
 
-    console.log('=== Changement de rôle v6 ===')
+    console.log('=== Changement de rôle v7 ===')
     console.log('Utilisateur:', targetUser.username, 'ID:', targetUser.id, 'Email:', targetUser.email)
     console.log('Ancien rôle:', targetUser.role, '-> Nouveau rôle:', newRole)
+    
+    // DEBUG: Alert pour confirmer que la fonction est appelée
+    // alert(`Changement de rôle: ${targetUser.username} -> ${newRole}`)
 
     // ÉTAPE 1: Sauvegarder l'OVERRIDE local - SOURCE DE VÉRITÉ ABSOLUE
     // On sauvegarde PAR EMAIL uniquement (clé stable et unique)
     const OVERRIDE_KEY = 'workus_role_overrides_v2'
     try {
-      const overrides = localStorage.getItem(OVERRIDE_KEY)
-      console.log('Overrides avant modification:', overrides)
-      const currentOverrides = overrides ? JSON.parse(overrides) : {}
+      // Lire les overrides existants
+      const existingOverrides = localStorage.getItem(OVERRIDE_KEY)
+      console.log('Overrides AVANT modification:', existingOverrides)
+      
+      const currentOverrides: Record<string, string> = existingOverrides ? JSON.parse(existingOverrides) : {}
       
       // Utiliser l'email normalisé comme clé principale (plus stable que l'ID)
       const emailKey = targetUser.email.toLowerCase().trim()
@@ -392,15 +397,22 @@ export function AdminDashboard() {
       // Aussi sauvegarder par ID au cas où
       currentOverrides[targetUser.id] = newRole
       
+      // Sauvegarder
       const newOverridesStr = JSON.stringify(currentOverrides)
+      console.log('Overrides À SAUVEGARDER:', newOverridesStr)
+      
       localStorage.setItem(OVERRIDE_KEY, newOverridesStr)
       
-      // Vérification immédiate
+      // Vérification IMMÉDIATE
       const verification = localStorage.getItem(OVERRIDE_KEY)
-      console.log('✅ Override sauvegardé. Vérification:', verification)
+      console.log('Overrides APRÈS sauvegarde (vérification):', verification)
       
-      if (verification !== newOverridesStr) {
-        console.error('❌ ERREUR: Les overrides n\'ont pas été sauvegardés correctement!')
+      if (verification === newOverridesStr) {
+        console.log('✅✅✅ SUCCÈS: Override correctement sauvegardé!')
+      } else {
+        console.error('❌❌❌ ERREUR: Les overrides n\'ont pas été sauvegardés!')
+        console.error('Attendu:', newOverridesStr)
+        console.error('Obtenu:', verification)
       }
     } catch (err) {
       console.error('❌ Erreur sauvegarde override:', err)
