@@ -60,10 +60,23 @@ export interface UserStats {
   totalFollowing: number
 }
 
+// Interface pour les utilisateurs publics
+export interface PublicUser {
+  id: string
+  username: string
+  avatar?: string
+  bio?: string
+  followers?: string[]
+}
+
 interface UserDataContextType {
   data: UserData
   stats: UserStats
   isLoading: boolean
+  
+  // Users (pour consulter d'autres profils)
+  users: PublicUser[]
+  getUserById: (id: string) => PublicUser | undefined
   
   // Saved items
   saveItem: (itemId: string, itemType: string) => Promise<void>
@@ -119,6 +132,8 @@ const defaultContextValue: UserDataContextType = {
   data: defaultData,
   stats: defaultStats,
   isLoading: false,
+  users: [],
+  getUserById: () => undefined,
   saveItem: async () => {},
   unsaveItem: async () => {},
   isSaved: () => false,
@@ -212,6 +227,31 @@ export function UserDataProvider({ children }: UserDataProviderProps) {
   const [stats, setStats] = useState<UserStats>(defaultStats)
   const [isLoading, setIsLoading] = useState(false)
   const [todayActivity, setTodayActivity] = useState(0)
+  const [users, setUsers] = useState<PublicUser[]>([])
+
+  // 🔁 Charger les utilisateurs depuis localStorage
+  useEffect(() => {
+    const savedUsers = localStorage.getItem("workus_public_users")
+    if (savedUsers) {
+      try {
+        setUsers(JSON.parse(savedUsers))
+      } catch {
+        // Ignorer les erreurs de parsing
+      }
+    }
+  }, [])
+
+  // 💾 Sauvegarder les utilisateurs à chaque changement
+  useEffect(() => {
+    if (users.length > 0) {
+      localStorage.setItem("workus_public_users", JSON.stringify(users))
+    }
+  }, [users])
+
+  // Récupérer un utilisateur par son ID
+  const getUserById = useCallback((id: string): PublicUser | undefined => {
+    return users.find((u) => u.id === id)
+  }, [users])
 
   // Charger les données depuis la DB
   useEffect(() => {
@@ -488,6 +528,8 @@ export function UserDataProvider({ children }: UserDataProviderProps) {
     data,
     stats,
     isLoading,
+    users,
+    getUserById,
     saveItem,
     unsaveItem,
     isSaved,

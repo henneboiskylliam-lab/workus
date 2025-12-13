@@ -212,14 +212,27 @@ export interface Database {
   }
 }
 
+// Flag pour éviter de spammer la console
+let hasLoggedSupabaseWarning = false
+
 /**
  * Helper pour vérifier si Supabase est disponible
+ * Affiche un warning une seule fois si non configuré
  */
 export function checkSupabase() {
   if (!isSupabaseConfigured) {
-    console.warn('Supabase non configuré. Utilisation du mode local (IndexedDB).')
+    if (!hasLoggedSupabaseWarning) {
+      console.info('Supabase non configuré. Utilisation du mode local (IndexedDB).')
+      hasLoggedSupabaseWarning = true
+    }
     return false
   }
   return true
+}
+
+// Log initial au chargement du module (une seule fois)
+if (!isSupabaseConfigured && !hasLoggedSupabaseWarning) {
+  console.info('💾 Mode local activé (IndexedDB) - Supabase non configuré')
+  hasLoggedSupabaseWarning = true
 }
 

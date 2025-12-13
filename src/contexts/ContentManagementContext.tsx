@@ -75,8 +75,10 @@ interface ContentManagementContextType {
   getContentByCategory: (categoryId: string) => Content[]
   getContentBySpecialty: (specialtyId: string) => Content[]
   getPublishedContent: () => Content[]
+  getPendingContent: () => Content[]
   searchContent: (query: string) => Content[]
   getTotalContentCount: () => number
+  pendingContent: Content[]
 }
 
 const CATEGORIES_STORAGE_KEY = 'workus_categories'
@@ -536,6 +538,13 @@ export function ContentManagementProvider({ children }: { children: ReactNode })
     return contents.filter(c => c.status === 'published')
   }, [contents])
 
+  const getPendingContent = useCallback(() => {
+    return contents.filter(c => c.status === 'draft')
+  }, [contents])
+
+  // Contenu en attente (computed)
+  const pendingContent = contents.filter(c => c.status === 'draft')
+
   const searchContent = useCallback((query: string) => {
     const lowerQuery = query.toLowerCase()
     return contents.filter(c => 
@@ -576,8 +585,10 @@ export function ContentManagementProvider({ children }: { children: ReactNode })
     getContentByCategory,
     getContentBySpecialty,
     getPublishedContent,
+    getPendingContent,
     searchContent,
-    getTotalContentCount
+    getTotalContentCount,
+    pendingContent
   }
 
   return (

@@ -9,6 +9,7 @@ import { ContentManagementProvider } from './contexts/ContentManagementContext'
 import { AdminStatsProvider } from './contexts/AdminStatsContext'
 import { ActivityProvider } from './contexts/ActivityContext'
 import { HelpCenterProvider } from './contexts/HelpCenterContext'
+import { MessagesProvider } from './contexts/MessagesContext'
 import { Layout } from './components/layout/Layout'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
 import { DatabaseProvider } from './db'
@@ -64,7 +65,9 @@ function AppProviders({ children }: { children: React.ReactNode }) {
                   <PostsProvider>
                     <ReportsProvider>
                       <NotificationsProvider>
-                        {children}
+                        <MessagesProvider>
+                          {children}
+                        </MessagesProvider>
                       </NotificationsProvider>
                     </ReportsProvider>
                   </PostsProvider>
@@ -129,6 +132,7 @@ function AppRoutes() {
 
               {/* Profil & Paramètres */}
               <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/profile/:userId" element={<ProfilePage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
 

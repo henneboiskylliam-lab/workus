@@ -34,6 +34,7 @@ import { useContentManagement } from '../../contexts/ContentManagementContext'
 import { usePosts } from '../../contexts/PostsContext'
 import { useHelpCenter } from '../../contexts/HelpCenterContext'
 import { InlineErrorBoundary } from '../ui/ErrorBoundary'
+import { MessagesPopup } from '../ui/MessagesPopup'
 import { useUsers } from '../../db'
 
 // Type pour les notifications (pour éviter les problèmes d'import)
@@ -551,6 +552,19 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
 
           {isAuthenticated ? (
             <>
+              {/* Messages privés */}
+              <InlineErrorBoundary
+                fallback={
+                  <button disabled className="p-2 rounded-xl bg-dark-800 text-dark-500 cursor-not-allowed" title="Messages indisponibles">
+                    <MessageCircle size={20} />
+                  </button>
+                }
+              >
+                <div className="relative">
+                  <MessagesPopup />
+                </div>
+              </InlineErrorBoundary>
+
               {/* Notifications avec protection */}
               <InlineErrorBoundary
                 fallback={

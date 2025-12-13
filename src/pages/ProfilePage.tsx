@@ -1,15 +1,34 @@
 import { useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Edit2, MapPin, Calendar, Link2, Github, Linkedin, Twitter,
-  Trophy, Flame, BookOpen, Code, X, Check, Share2, Settings, Camera
+  Trophy, Flame, BookOpen, Code, X, Check, Share2, Settings, Camera,
+  UserPlus, UserMinus, MessageCircle, FileText
 } from 'lucide-react'
 import { LevelIndicator, StatCard, CVBuilder } from '../components/ui'
 import { useAuth } from '../contexts/AuthContext'
 import { useUserData } from '../contexts/UserDataContext'
+import { useMessages } from '../contexts/MessagesContext'
 
 const PROFILE_STORAGE_KEY = 'workus_profile_data'
+
+/**
+ * Charge les données de profil d'un utilisateur depuis localStorage
+ */
+function loadUserProfileData(userId: string) {
+  if (typeof window !== 'undefined') {
+    const stored = localStorage.getItem(`workus_profile_${userId}`)
+    if (stored) {
+      try {
+        return JSON.parse(stored)
+      } catch {
+        // Ignorer
+      }
+    }
+  }
+  return null
+}
 
 // Données par défaut pour un nouveau profil
 const defaultUserStats = {
@@ -24,16 +43,70 @@ const defaultUserStats = {
 }
 
 /**
- * ProfilePage - Profil utilisateur avec upload de photo fonctionnel
+ * ProfilePage - Profil utilisateur
+ * - Mode édition : pour son propre profil
+ * - Mode lecture : pour consulter le profil d'un autre utilisateur
  */
 export function ProfilePage() {
   const navigate = useNavigate()
+  const { userId } = useParams<{ userId: string }>()
   const { user, isAuthenticated } = useAuth()
-  const { data } = useUserData()
+  const { data, getUserById, isFollowing, followUser, unfollowUser } = useUserData()
+  const { openConversation } = useMessages()
+  
+  // Déterminer si c'est notre propre profil ou celui d'un autre utilisateur
+  const isOwnProfile = !userId || userId === user?.id
   
   // Stats utilisateur depuis le contexte ou valeurs par défaut
   const userStats = defaultUserStats
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // État pour les données de l'utilisateur consulté
+  const [viewedUser, setViewedUser] = useState<{
+    username: string
+    email: string
+    bio: string
+    avatar?: string
+    joinedAt: string
+    location?: string
+    website?: string
+    github?: string
+    linkedin?: string
+    twitter?: string
+    followers: number
+    following: number
+    skills: any[]
+    cvData?: any
+  } | null>(null)
+
+  // Charger les données de l'utilisateur consulté
+  useEffect(() => {
+    if (userId && userId !== user?.id) {
+      // Chercher dans la liste des utilisateurs publics
+      const publicUser = getUserById(userId)
+      
+      // Charger les données de profil depuis localStorage
+      const profileData = loadUserProfileData(userId)
+      const cvData = localStorage.getItem(`workus_cv_${userId}`)
+      
+      setViewedUser({
+        username: publicUser?.username || 'Utilisateur',
+        email: '', // Ne pas afficher l'email des autres utilisateurs
+        bio: profileData?.bio || publicUser?.bio || 'Aucune bio disponible',
+        avatar: publicUser?.avatar,
+        joinedAt: new Date().toISOString(),
+        location: profileData?.location,
+        website: profileData?.website,
+        github: profileData?.github,
+        linkedin: profileData?.linkedin,
+        twitter: profileData?.twitter,
+        followers: publicUser?.followers?.length || 0,
+        following: 0,
+        skills: [],
+        cvData: cvData ? JSON.parse(cvData) : null
+      })
+    }
+  }, [userId, user?.id, getUserById])
 
   // Charger les données du profil depuis localStorage
   const loadProfileData = () => {
@@ -163,8 +236,8 @@ export function ProfilePage() {
     }
   }
 
-  // Utiliser les données de l'utilisateur connecté
-  const displayUser = {
+  // Utiliser les données de l'utilisateur connecté ou de l'utilisateur consulté
+  const displayUser = isOwnProfile ? {
     username: user?.username || 'Utilisateur',
     email: user?.email || '',
     bio: savedProfile.bio || 'Bienvenue sur Work Us !',
@@ -172,6 +245,51 @@ export function ProfilePage() {
     followers: data.followers?.length || 0,
     following: data.following?.length || 0,
     skills: userSkillsWithDetails,
+    location: savedProfile.location,
+    website: savedProfile.website,
+    github: savedProfile.github,
+    linkedin: savedProfile.linkedin,
+    twitter: savedProfile.twitter,
+  } : viewedUser || {
+    username: 'Utilisateur introuvable',
+    email: '',
+    bio: '',
+    joinedAt: new Date().toISOString(),
+    followers: 0,
+    following: 0,
+    skills: [],
+  }
+
+  // Gérer le follow/unfollow
+  const handleFollowToggle = async () => {
+    if (!userId || !viewedUser) return
+    
+    if (isFollowing(userId)) {
+      await unfollowUser(userId)
+    } else {
+      await followUser(userId, viewedUser.username)
+    }
+  }
+
+  // Si l'utilisateur n'est pas trouvé
+  if (!isOwnProfile && !viewedUser) {
+    return (
+      <div className="max-w-4xl mx-auto p-8 text-center">
+        <div className="bg-dark-800 rounded-2xl p-12 border border-dark-700">
+          <div className="w-20 h-20 bg-dark-700 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FileText className="w-10 h-10 text-dark-500" />
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Utilisateur introuvable</h2>
+          <p className="text-dark-400 mb-6">Ce profil n'existe pas ou n'est plus disponible.</p>
+          <button
+            onClick={() => navigate('/')}
+            className="px-6 py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl transition-colors"
+          >
+            Retour à l'accueil
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -235,19 +353,21 @@ export function ProfilePage() {
               </div>
             )}
             
-            {/* Overlay pour changer la photo */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 rounded-3xl flex items-center justify-center transition-opacity border-4 border-transparent"
-            >
-              <div className="text-center">
-                <Camera className="w-8 h-8 text-white mx-auto mb-1" />
-                <span className="text-xs text-white">Changer</span>
-              </div>
-            </button>
+            {/* Overlay pour changer la photo - seulement sur son propre profil */}
+            {isOwnProfile && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 rounded-3xl flex items-center justify-center transition-opacity border-4 border-transparent"
+              >
+                <div className="text-center">
+                  <Camera className="w-8 h-8 text-white mx-auto mb-1" />
+                  <span className="text-xs text-white">Changer</span>
+                </div>
+              </button>
+            )}
 
-            {/* Bouton supprimer si photo existe */}
-            {profilePhoto && (
+            {/* Bouton supprimer si photo existe - seulement sur son propre profil */}
+            {isOwnProfile && profilePhoto && (
               <button
                 onClick={handleRemovePhoto}
                 className="absolute -top-2 -right-2 p-2 bg-red-500 rounded-full text-white hover:bg-red-600 transition-colors shadow-lg"
@@ -271,20 +391,62 @@ export function ProfilePage() {
           >
             <Share2 className="w-4 h-4" />
           </button>
-          <button 
-            onClick={() => navigate('/settings')}
-            className="p-3 bg-dark-800/80 backdrop-blur-sm text-white rounded-xl hover:bg-dark-700 transition-all"
-            title="Paramètres"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={() => setShowEditModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-dark-800/80 backdrop-blur-sm text-white rounded-xl hover:bg-dark-700 transition-all"
-          >
-            <Edit2 className="w-4 h-4" />
-            Modifier
-          </button>
+          
+          {isOwnProfile ? (
+            <>
+              {/* Boutons pour son propre profil */}
+              <button 
+                onClick={() => navigate('/settings')}
+                className="p-3 bg-dark-800/80 backdrop-blur-sm text-white rounded-xl hover:bg-dark-700 transition-all"
+                title="Paramètres"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => setShowEditModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-dark-800/80 backdrop-blur-sm text-white rounded-xl hover:bg-dark-700 transition-all"
+              >
+                <Edit2 className="w-4 h-4" />
+                Modifier
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Boutons pour le profil d'un autre utilisateur */}
+              <button 
+                onClick={handleFollowToggle}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all ${
+                  userId && isFollowing(userId)
+                    ? 'bg-dark-700 text-dark-300 hover:bg-red-500/20 hover:text-red-400'
+                    : 'bg-primary-500 text-white hover:bg-primary-600'
+                }`}
+              >
+                {userId && isFollowing(userId) ? (
+                  <>
+                    <UserMinus className="w-4 h-4" />
+                    Ne plus suivre
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="w-4 h-4" />
+                    Suivre
+                  </>
+                )}
+              </button>
+              <button 
+                onClick={() => {
+                  if (userId && viewedUser) {
+                    openConversation(userId, viewedUser.username, viewedUser.avatar)
+                  }
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-dark-800/80 backdrop-blur-sm text-white rounded-xl hover:bg-dark-700 transition-all"
+                title="Envoyer un message"
+              >
+                <MessageCircle className="w-4 h-4" />
+                Message
+              </button>
+            </>
+          )}
         </div>
       </motion.div>
 
@@ -648,7 +810,7 @@ export function ProfilePage() {
         </div>
       </motion.section>
 
-      {/* CV Builder */}
+      {/* CV Section */}
       {isAuthenticated && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
@@ -656,7 +818,77 @@ export function ProfilePage() {
           transition={{ delay: 0.6 }}
           className="mt-8"
         >
-          <CVBuilder />
+          {isOwnProfile ? (
+            // Mode édition : CVBuilder complet
+            <CVBuilder />
+          ) : (
+            // Mode lecture : Afficher le CV de l'autre utilisateur (lecture seule)
+            <div className="bg-dark-800 rounded-2xl border border-dark-700 p-6">
+              <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-primary-400" />
+                CV de {viewedUser?.username || 'cet utilisateur'}
+              </h2>
+              
+              {viewedUser?.cvData ? (
+                // Afficher le CV en lecture seule
+                <div className="space-y-6">
+                  {/* Informations personnelles */}
+                  {viewedUser.cvData.personalInfo && (
+                    <div className="bg-dark-700/50 rounded-xl p-4">
+                      <h3 className="font-semibold text-white mb-3">Informations</h3>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        {viewedUser.cvData.personalInfo.firstName && (
+                          <p className="text-dark-300">
+                            <span className="text-dark-500">Prénom:</span> {viewedUser.cvData.personalInfo.firstName}
+                          </p>
+                        )}
+                        {viewedUser.cvData.personalInfo.lastName && (
+                          <p className="text-dark-300">
+                            <span className="text-dark-500">Nom:</span> {viewedUser.cvData.personalInfo.lastName}
+                          </p>
+                        )}
+                        {viewedUser.cvData.personalInfo.title && (
+                          <p className="text-dark-300 col-span-2">
+                            <span className="text-dark-500">Titre:</span> {viewedUser.cvData.personalInfo.title}
+                          </p>
+                        )}
+                        {viewedUser.cvData.personalInfo.summary && (
+                          <p className="text-dark-300 col-span-2">
+                            <span className="text-dark-500">Résumé:</span> {viewedUser.cvData.personalInfo.summary}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sections du CV */}
+                  {viewedUser.cvData.sections && Array.isArray(viewedUser.cvData.sections) && viewedUser.cvData.sections.map((section: any) => (
+                    section.items && section.items.length > 0 && (
+                      <div key={section.id} className="bg-dark-700/50 rounded-xl p-4">
+                        <h3 className="font-semibold text-white mb-3">{section.title}</h3>
+                        <div className="space-y-3">
+                          {section.items.map((item: any) => (
+                            <div key={item.id} className="border-l-2 border-primary-500/30 pl-3">
+                              <p className="font-medium text-white">{item.title}</p>
+                              {item.subtitle && <p className="text-sm text-dark-400">{item.subtitle}</p>}
+                              {item.date && <p className="text-xs text-dark-500">{item.date}</p>}
+                              {item.description && <p className="text-sm text-dark-300 mt-1">{item.description}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  ))}
+                </div>
+              ) : (
+                // Pas de CV disponible
+                <div className="text-center py-12">
+                  <FileText className="w-16 h-16 text-dark-600 mx-auto mb-4" />
+                  <p className="text-dark-400">Cet utilisateur n'a pas encore créé de CV</p>
+                </div>
+              )}
+            </div>
+          )}
         </motion.section>
       )}
     </div>

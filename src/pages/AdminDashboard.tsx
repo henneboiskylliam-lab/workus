@@ -82,7 +82,7 @@ export function AdminDashboard() {
   })
   
   const { user } = useAuth()
-  const { categories, specialties } = useContentManagement()
+  const { categories, specialties, pendingContent } = useContentManagement()
   const { posts } = usePosts()
   const { reports: contextReports, getPendingCount } = useReports()
   const { stats: adminStats, getStatsForPeriod, getUserEvolution, recordDailySnapshot } = useAdminStats()
