@@ -807,15 +807,116 @@ export function AdminDashboard() {
   const totalContent = posts.length // Nombre réel de contenus publiés
   const pendingReportsCount = getPendingCount() // Pour le badge de l'onglet signalements
   
-  // Statistiques pour la période sélectionnée
-  const periodStats = getStatsForPeriod(statPeriod)
-  
-  // Calcul des pourcentages d'évolution
-  const calculateEvolution = (current: number, previous: number): string => {
-    if (previous === 0) return current > 0 ? '+100%' : '0%'
-    const evolution = ((current - previous) / previous) * 100
-    return evolution >= 0 ? `+${evolution.toFixed(0)}%` : `${evolution.toFixed(0)}%`
+  // Fonctions utilitaires pour les dates
+  const getStartOfPeriod = (period: 'week' | 'month' | 'year', offset: number = 0): Date => {
+    const now = new Date()
+    const start = new Date(now)
+    
+    if (period === 'week') {
+      // Début de la semaine (lundi)
+      const dayOfWeek = now.getDay()
+      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+      start.setDate(now.getDate() - diff - (offset * 7))
+      start.setHours(0, 0, 0, 0)
+    } else if (period === 'month') {
+      start.setMonth(now.getMonth() - offset, 1)
+      start.setHours(0, 0, 0, 0)
+    } else if (period === 'year') {
+      start.setFullYear(now.getFullYear() - offset, 0, 1)
+      start.setHours(0, 0, 0, 0)
+    }
+    return start
   }
+
+  const getEndOfPeriod = (period: 'week' | 'month' | 'year', offset: number = 0): Date => {
+    const start = getStartOfPeriod(period, offset)
+    const end = new Date(start)
+    
+    if (period === 'week') {
+      end.setDate(start.getDate() + 6)
+      end.setHours(23, 59, 59, 999)
+    } else if (period === 'month') {
+      end.setMonth(start.getMonth() + 1, 0)
+      end.setHours(23, 59, 59, 999)
+    } else if (period === 'year') {
+      end.setFullYear(start.getFullYear() + 1, 0, 0)
+      end.setHours(23, 59, 59, 999)
+    }
+    return end
+  }
+
+  // Compter les utilisateurs inscrits dans une période
+  const countUsersInPeriod = (period: 'week' | 'month' | 'year', offset: number = 0): number => {
+    const start = getStartOfPeriod(period, offset)
+    const end = getEndOfPeriod(period, offset)
+    
+    return allUsers.filter(user => {
+      const joinDate = new Date(user.joinedAt)
+      return joinDate >= start && joinDate <= end
+    }).length
+  }
+
+  // Compter les créateurs dans une période
+  const countCreatorsInPeriod = (period: 'week' | 'month' | 'year', offset: number = 0): number => {
+    const start = getStartOfPeriod(period, offset)
+    const end = getEndOfPeriod(period, offset)
+    
+    return allUsers.filter(user => {
+      const joinDate = new Date(user.joinedAt)
+      const isCreator = user.role === 'creator' || user.role === 'admin'
+      return isCreator && joinDate >= start && joinDate <= end
+    }).length
+  }
+
+  // Calculer les statistiques en temps réel pour la période sélectionnée
+  const getRealTimeStats = (period: 'week' | 'month' | 'year') => {
+    const currentPeriodUsers = countUsersInPeriod(period, 0)
+    const previousPeriodUsers = countUsersInPeriod(period, 1)
+    const currentPeriodCreators = countCreatorsInPeriod(period, 0)
+    const previousPeriodCreators = countCreatorsInPeriod(period, 1)
+    
+    // Calculer les pourcentages
+    const calculatePercentage = (current: number, previous: number): { percentage: string; trend: 'up' | 'down' | 'stable' } => {
+      if (previous === 0) {
+        return { 
+          percentage: current > 0 ? '+100%' : '0%', 
+          trend: current > 0 ? 'up' : 'stable' 
+        }
+      }
+      const evolution = ((current - previous) / previous) * 100
+      return {
+        percentage: evolution >= 0 ? `+${Math.round(evolution)}%` : `${Math.round(evolution)}%`,
+        trend: evolution > 0 ? 'up' : evolution < 0 ? 'down' : 'stable'
+      }
+    }
+
+    const usersEvolution = calculatePercentage(currentPeriodUsers, previousPeriodUsers)
+    const creatorsEvolution = calculatePercentage(currentPeriodCreators, previousPeriodCreators)
+
+    return {
+      users: {
+        current: currentPeriodUsers,
+        previous: previousPeriodUsers,
+        ...usersEvolution
+      },
+      creators: {
+        current: currentPeriodCreators,
+        previous: previousPeriodCreators,
+        total: totalCreators,
+        ...creatorsEvolution
+      },
+      content: {
+        current: 0, // TODO: Compter les contenus par période
+        previous: 0
+      }
+    }
+  }
+
+  // Statistiques pour la période sélectionnée (en temps réel)
+  const realTimeStats = getRealTimeStats(statPeriod)
+  
+  // Statistiques pour la période sélectionnée (ancien système, gardé pour compatibilité)
+  const periodStats = getStatsForPeriod(statPeriod)
 
   if (!user || user.role !== 'admin') {
     return (
@@ -904,12 +1005,8 @@ export function AdminDashboard() {
               Statistiques : <span className="text-white font-medium">{periodLabels[statPeriod]}</span>
             </div>
 
-            {/* Stats grid - Évolution dynamique */}
+            {/* Stats grid - Évolution dynamique en temps réel */}
             {(() => {
-              const evolution = getUserEvolution()
-              // Sélectionner l'évolution en fonction de la période choisie
-              const selectedEvolution = statPeriod === 'week' ? evolution.week :
-                                        statPeriod === 'month' ? evolution.month : evolution.year
               const periodLabel = statPeriod === 'week' ? 'cette semaine' :
                                   statPeriod === 'month' ? 'ce mois' : 'cette année'
               
@@ -918,24 +1015,24 @@ export function AdminDashboard() {
                   <StatCard
                     label="Utilisateurs totaux"
                     value={totalUsers.toLocaleString()}
-                    change={selectedEvolution.trend === 'up' ? 1 : selectedEvolution.trend === 'down' ? -1 : 0}
-                    changeLabel={`${selectedEvolution.percentage} (${selectedEvolution.current} nouveaux ${periodLabel})`}
+                    change={realTimeStats.users.trend === 'up' ? 1 : realTimeStats.users.trend === 'down' ? -1 : 0}
+                    changeLabel={`${realTimeStats.users.percentage} (${realTimeStats.users.current} nouveaux ${periodLabel})`}
                     icon={<Users className="w-6 h-6 text-white" />}
                     gradient="from-blue-500 to-cyan-500"
                   />
                   <StatCard
                     label="Créateurs"
                     value={totalCreators}
-                    change={totalCreators > 0 ? 1 : 0}
-                    changeLabel={`${totalCreators} créateur${totalCreators > 1 ? 's' : ''} actif${totalCreators > 1 ? 's' : ''}`}
+                    change={realTimeStats.creators.trend === 'up' ? 1 : realTimeStats.creators.trend === 'down' ? -1 : 0}
+                    changeLabel={`${realTimeStats.creators.total} créateur${realTimeStats.creators.total > 1 ? 's' : ''} actif${realTimeStats.creators.total > 1 ? 's' : ''}`}
                     icon={<UserPlus className="w-6 h-6 text-white" />}
                     gradient="from-purple-500 to-pink-500"
                   />
                   <StatCard
                     label="Contenus publiés"
                     value={totalContent}
-                    change={periodStats.content > 0 ? 1 : 0}
-                    changeLabel={periodStats.content > 0 ? `+${periodStats.content} ${periodLabel}` : `0 ${periodLabel}`}
+                    change={0}
+                    changeLabel={`${totalContent} ${periodLabel}`}
                     icon={<FileText className="w-6 h-6 text-white" />}
                     gradient="from-green-500 to-emerald-500"
                   />
