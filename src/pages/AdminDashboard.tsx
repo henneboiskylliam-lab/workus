@@ -129,6 +129,7 @@ export function AdminDashboard() {
   }, [])
 
   // Charger tous les utilisateurs (Supabase + IndexedDB + localStorage)
+  // Avec priorité aux rôles modifiés localement (stockés dans workus_admin_role_overrides)
   const loadAllUsers = useCallback(async () => {
     setIsLoadingUsers(true)
     
@@ -136,7 +137,19 @@ export function AdminDashboard() {
       // 1. Charger depuis Supabase (source principale si configuré)
       const supabaseUsers = await loadUsersFromSupabase()
       
-      // 2. Récupérer les rôles depuis localStorage (pour les utilisateurs locaux)
+      // 2. Récupérer les OVERRIDES de rôles (modifications admin locales - PRIORITÉ MAXIMALE)
+      let roleOverrides: Record<string, string> = {}
+      try {
+        const overrides = localStorage.getItem('workus_admin_role_overrides')
+        if (overrides) {
+          roleOverrides = JSON.parse(overrides)
+          console.log('Overrides de rôles chargés:', roleOverrides)
+        }
+      } catch {
+        // Ignorer
+      }
+      
+      // 3. Récupérer les rôles depuis localStorage (pour les utilisateurs locaux)
       let localStorageRoles: Record<string, string> = {}
       try {
         const registeredUsers = localStorage.getItem('workus_registered_users')
@@ -165,10 +178,10 @@ export function AdminDashboard() {
         // Ignorer
       }
 
-      // 3. Convertir les utilisateurs IndexedDB
+      // 4. Convertir les utilisateurs IndexedDB
       const localUsers: DisplayUser[] = Array.isArray(dbUsers) ? dbUsers.map(u => {
-        const roleFromStorage = localStorageRoles[u.id] || localStorageRoles[u.email]
-        const finalRole = (roleFromStorage || u.role) as DisplayUser['role']
+        // Priorité: 1. Override admin, 2. localStorage, 3. IndexedDB
+        const finalRole = (roleOverrides[u.id] || localStorageRoles[u.id] || localStorageRoles[u.email] || u.role) as DisplayUser['role']
         
         return {
           id: u.id,
@@ -182,17 +195,25 @@ export function AdminDashboard() {
         }
       }) : []
 
-      // 4. Fusionner les utilisateurs (Supabase prioritaire, éviter les doublons)
+      // 5. Fusionner les utilisateurs (Supabase + overrides, éviter les doublons)
       const allUserIds = new Set<string>()
       const allEmails = new Set<string>()
       const mergedUsers: DisplayUser[] = []
 
-      // D'abord les utilisateurs Supabase
+      // D'abord les utilisateurs Supabase, mais avec override de rôle si présent
       for (const user of supabaseUsers) {
         if (!allUserIds.has(user.id) && !allEmails.has(user.email)) {
           allUserIds.add(user.id)
           allEmails.add(user.email)
-          mergedUsers.push(user)
+          // Appliquer l'override de rôle si existant (PRIORITÉ sur Supabase)
+          const overriddenRole = roleOverrides[user.id]
+          if (overriddenRole) {
+            console.log(`Override appliqué pour ${user.username}: ${user.role} -> ${overriddenRole}`)
+          }
+          mergedUsers.push({
+            ...user,
+            role: (overriddenRole || user.role) as DisplayUser['role']
+          })
         }
       }
 
@@ -331,55 +352,55 @@ export function AdminDashboard() {
       return
     }
 
-    console.log('=== Changement de rôle v2 ===')
+    console.log('=== Changement de rôle v3 ===')
     console.log('Utilisateur:', targetUser.username, 'ID:', targetUser.id)
     console.log('Ancien rôle:', targetUser.role, '-> Nouveau rôle:', newRole)
 
-    // 1. Mettre à jour dans Supabase (source principale)
-    let supabaseUpdateSuccess = false
-    if (checkSupabase() && supabase) {
-      try {
-        // Essayer la mise à jour directe (plus fiable si RLS est désactivé ou bien configuré)
-        const { data, error } = await supabase
-          .from('profiles')
-          .update({ role: newRole, updated_at: new Date().toISOString() })
-          .eq('id', targetUser.id)
-          .select()
-        
-        console.log('Réponse Supabase - data:', data, 'error:', error)
-        
-        if (error) {
-          console.error('Erreur mise à jour Supabase:', error.message, error.code)
-          // Ne pas afficher d'erreur toast, continuer avec les mises à jour locales
-        } else if (data && data.length > 0) {
-          console.log('✅ Mise à jour Supabase réussie:', data[0])
-          supabaseUpdateSuccess = true
-        } else {
-          console.warn('⚠️ Aucune ligne modifiée dans Supabase (RLS?)')
-          // Essayer avec la fonction RPC si disponible
-          try {
-            const { data: rpcResult, error: rpcError } = await supabase
-              .rpc('update_user_role', { 
-                target_user_id: targetUser.id, 
-                new_role: newRole 
-              })
-            
-            if (!rpcError && rpcResult?.success !== false) {
-              console.log('✅ Mise à jour via RPC réussie')
-              supabaseUpdateSuccess = true
-            } else {
-              console.warn('RPC échoué ou non disponible:', rpcError?.message || rpcResult?.error)
-            }
-          } catch (rpcErr) {
-            console.warn('RPC non disponible:', rpcErr)
-          }
-        }
-      } catch (err) {
-        console.error('Erreur Supabase:', err)
-      }
+    // PRIORITÉ 1: Sauvegarder l'OVERRIDE local (persistera même si Supabase échoue)
+    // C'est la source de vérité locale pour les rôles modifiés par l'admin
+    try {
+      const overrides = localStorage.getItem('workus_admin_role_overrides')
+      const currentOverrides = overrides ? JSON.parse(overrides) : {}
+      currentOverrides[targetUser.id] = newRole
+      localStorage.setItem('workus_admin_role_overrides', JSON.stringify(currentOverrides))
+      console.log('✅ Override local sauvegardé:', targetUser.id, '->', newRole)
+    } catch (err) {
+      console.error('Erreur sauvegarde override:', err)
     }
 
-    // 2. Mettre à jour dans localStorage (workus_registered_users)
+    // 2. Essayer de mettre à jour dans Supabase (en background, non-bloquant)
+    if (checkSupabase() && supabase) {
+      // Lancer en background sans bloquer
+      (async () => {
+        try {
+          const { error } = await supabase
+            .from('profiles')
+            .update({ role: newRole, updated_at: new Date().toISOString() })
+            .eq('id', targetUser.id)
+          
+          if (error) {
+            console.warn('Supabase update échoué (RLS?):', error.message)
+          } else {
+            console.log('✅ Supabase mis à jour en background')
+            // Si Supabase réussit, on peut supprimer l'override local
+            // (Supabase devient la source de vérité)
+            try {
+              const overrides = localStorage.getItem('workus_admin_role_overrides')
+              if (overrides) {
+                const currentOverrides = JSON.parse(overrides)
+                delete currentOverrides[targetUser.id]
+                localStorage.setItem('workus_admin_role_overrides', JSON.stringify(currentOverrides))
+                console.log('Override local supprimé (Supabase est maintenant à jour)')
+              }
+            } catch { /* ignorer */ }
+          }
+        } catch (err) {
+          console.warn('Erreur Supabase background:', err)
+        }
+      })()
+    }
+
+    // 3. Mettre à jour dans localStorage (workus_registered_users)
     const stored = localStorage.getItem('workus_registered_users')
     if (stored) {
       try {
@@ -396,7 +417,7 @@ export function AdminDashboard() {
       }
     }
 
-    // 3. Mettre à jour dans la liste publique (workus_public_users)
+    // 4. Mettre à jour dans la liste publique (workus_public_users)
     try {
       const publicUsers = localStorage.getItem('workus_public_users')
       if (publicUsers) {
@@ -413,14 +434,14 @@ export function AdminDashboard() {
       // Ignorer
     }
 
-    // 4. Mettre à jour dans IndexedDB (base de données locale)
+    // 5. Mettre à jour dans IndexedDB (base de données locale)
     try {
       await userService.update(targetUser.id, { role: newRole })
     } catch (error) {
       console.error('Erreur mise à jour IndexedDB:', error)
     }
 
-    // 5. Si l'utilisateur modifié est actuellement connecté, mettre à jour sa session
+    // 6. Si l'utilisateur modifié est actuellement connecté, mettre à jour sa session
     try {
       const currentUserData = localStorage.getItem('workus_user')
       if (currentUserData) {
@@ -434,7 +455,7 @@ export function AdminDashboard() {
       // Ignorer
     }
 
-    // 6. Mettre à jour l'état local
+    // 7. Mettre à jour l'état local IMMÉDIATEMENT
     setAllUsers(prev => prev.map(u => {
       if (u.id === targetUser.id) {
         return { ...u, role: newRole }
