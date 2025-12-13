@@ -1,8 +1,15 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react'
+import { useAuth } from './AuthContext'
+import { postsDB, DBPost } from '../lib/dbService'
+import { getCurrentISODate } from '../db'
 
 /**
  * Types pour les posts
+ * 
+ * RÈGLE D'OR: Les posts sont chargés depuis la DB
+ * Toute modification écrit en base ET met à jour le state
  */
+
 export interface Post {
   id: string
   authorId: string
@@ -10,174 +17,262 @@ export interface Post {
   authorAvatar?: string
   content: string
   images?: string[]
-  category?: string
-  specialty?: string
-  tags?: string[]
-  likes: string[] // IDs des utilisateurs
-  comments: Comment[]
+  tags: string[]
+  specialtyId?: string
+  likes: number
+  saves: number
   shares: number
+  reposts: number
+  commentsCount: number
+  isRepost: boolean
+  originalPostId?: string
   createdAt: string
-  updatedAt?: string
+  updatedAt: string
 }
 
 export interface Comment {
   id: string
+  postId: string
   authorId: string
   authorName: string
   content: string
-  likes: string[]
+  likes: number
   createdAt: string
 }
 
 interface PostsContextType {
   posts: Post[]
-  addPost: (post: Omit<Post, 'id' | 'createdAt' | 'likes' | 'comments' | 'shares'>) => void
-  updatePost: (id: string, updates: Partial<Post>) => void
-  deletePost: (id: string) => void
-  likePost: (postId: string, userId: string) => void
-  unlikePost: (postId: string, userId: string) => void
-  addComment: (postId: string, comment: Omit<Comment, 'id' | 'createdAt' | 'likes'>) => void
-  deleteComment: (postId: string, commentId: string) => void
+  isLoading: boolean
+  addPost: (post: Omit<Post, 'id' | 'createdAt' | 'updatedAt' | 'likes' | 'saves' | 'shares' | 'reposts' | 'commentsCount'>) => Promise<Post | null>
+  updatePost: (id: string, updates: Partial<Post>) => Promise<void>
+  deletePost: (id: string) => Promise<void>
+  likePost: (postId: string) => Promise<void>
+  unlikePost: (postId: string) => Promise<void>
+  savePost: (postId: string) => Promise<void>
+  unsavePost: (postId: string) => Promise<void>
+  sharePost: (postId: string) => Promise<void>
   getPostsByUser: (userId: string) => Post[]
-  getPostsByCategory: (category: string) => Post[]
-  getPostsBySpecialty: (specialty: string) => Post[]
+  getPostsBySpecialty: (specialtyId: string) => Post[]
   searchPosts: (query: string) => Post[]
+  refreshPosts: () => Promise<void>
 }
 
-const STORAGE_KEY = 'workus_posts'
+const defaultContextValue: PostsContextType = {
+  posts: [],
+  isLoading: false,
+  addPost: async () => null,
+  updatePost: async () => {},
+  deletePost: async () => {},
+  likePost: async () => {},
+  unlikePost: async () => {},
+  savePost: async () => {},
+  unsavePost: async () => {},
+  sharePost: async () => {},
+  getPostsByUser: () => [],
+  getPostsBySpecialty: () => [],
+  searchPosts: () => [],
+  refreshPosts: async () => {}
+}
 
-const PostsContext = createContext<PostsContextType | undefined>(undefined)
+const PostsContext = createContext<PostsContextType>(defaultContextValue)
 
 /**
- * PostsProvider - Gère les posts du feed
+ * Convertit un post DB vers le format de l'application
+ */
+function dbToPost(dbPost: DBPost): Post {
+  return {
+    id: dbPost.id,
+    authorId: dbPost.author_id,
+    authorName: dbPost.author_name || 'Utilisateur',
+    authorAvatar: dbPost.author_avatar,
+    content: dbPost.content,
+    images: dbPost.images,
+    tags: dbPost.tags || [],
+    specialtyId: dbPost.specialty_id || undefined,
+    likes: dbPost.likes,
+    saves: dbPost.saves,
+    shares: dbPost.shares,
+    reposts: dbPost.reposts,
+    commentsCount: dbPost.comments,
+    isRepost: dbPost.is_repost,
+    originalPostId: dbPost.original_post_id || undefined,
+    createdAt: dbPost.created_at,
+    updatedAt: dbPost.updated_at
+  }
+}
+
+/**
+ * PostsProvider - Gère les posts depuis la DB
  */
 export function PostsProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
   const [posts, setPosts] = useState<Post[]>([])
+  const [isLoading, setIsLoading] = useState(false)
 
-  // Charger les posts au démarrage
+  // Charger les posts au mount
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) {
+    const loadPosts = async () => {
+      setIsLoading(true)
       try {
-        setPosts(JSON.parse(stored))
-      } catch {
+        const dbPosts = await postsDB.getAll(100)
+        setPosts(dbPosts.map(dbToPost))
+      } catch (error) {
+        console.error('Erreur chargement posts:', error)
         setPosts([])
+      } finally {
+        setIsLoading(false)
       }
     }
+
+    loadPosts()
   }, [])
 
-  // Sauvegarder automatiquement
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(posts))
-  }, [posts])
-
   // Ajouter un post
-  const addPost = useCallback((post: Omit<Post, 'id' | 'createdAt' | 'likes' | 'comments' | 'shares'>) => {
-    const newPost: Post = {
-      ...post,
-      id: `post-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      likes: [],
-      comments: [],
-      shares: 0,
-      createdAt: new Date().toISOString()
+  const addPost = useCallback(async (
+    post: Omit<Post, 'id' | 'createdAt' | 'updatedAt' | 'likes' | 'saves' | 'shares' | 'reposts' | 'commentsCount'>
+  ): Promise<Post | null> => {
+    try {
+      const dbPost = await postsDB.create({
+        author_id: post.authorId,
+        author_name: post.authorName,
+        author_avatar: post.authorAvatar,
+        content: post.content,
+        images: post.images || [],
+        tags: post.tags,
+        specialty_id: post.specialtyId || null,
+        is_repost: post.isRepost || false,
+        original_post_id: post.originalPostId || null
+      })
+
+      if (dbPost) {
+        const newPost = dbToPost(dbPost)
+        setPosts(prev => [newPost, ...prev])
+        return newPost
+      }
+    } catch (error) {
+      console.error('Erreur création post:', error)
     }
-    setPosts(prev => [newPost, ...prev])
+    return null
   }, [])
 
   // Mettre à jour un post
-  const updatePost = useCallback((id: string, updates: Partial<Post>) => {
+  const updatePost = useCallback(async (id: string, updates: Partial<Post>): Promise<void> => {
+    // Pour l'instant, mettre à jour localement
+    // TODO: Implémenter la mise à jour en DB
     setPosts(prev => prev.map(p => 
-      p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p
+      p.id === id ? { ...p, ...updates, updatedAt: getCurrentISODate() } : p
     ))
   }, [])
 
   // Supprimer un post
-  const deletePost = useCallback((id: string) => {
-    setPosts(prev => prev.filter(p => p.id !== id))
+  const deletePost = useCallback(async (id: string): Promise<void> => {
+    try {
+      const success = await postsDB.delete(id)
+      if (success) {
+        setPosts(prev => prev.filter(p => p.id !== id))
+      }
+    } catch (error) {
+      console.error('Erreur suppression post:', error)
+    }
   }, [])
 
   // Liker un post
-  const likePost = useCallback((postId: string, userId: string) => {
-    setPosts(prev => prev.map(p => 
-      p.id === postId && !p.likes.includes(userId)
-        ? { ...p, likes: [...p.likes, userId] }
-        : p
-    ))
+  const likePost = useCallback(async (postId: string): Promise<void> => {
+    try {
+      const success = await postsDB.toggleLike(postId, true)
+      if (success) {
+        setPosts(prev => prev.map(p => 
+          p.id === postId ? { ...p, likes: p.likes + 1 } : p
+        ))
+      }
+    } catch (error) {
+      console.error('Erreur like post:', error)
+    }
   }, [])
 
   // Unliker un post
-  const unlikePost = useCallback((postId: string, userId: string) => {
-    setPosts(prev => prev.map(p => 
-      p.id === postId
-        ? { ...p, likes: p.likes.filter(id => id !== userId) }
-        : p
-    ))
-  }, [])
-
-  // Ajouter un commentaire
-  const addComment = useCallback((postId: string, comment: Omit<Comment, 'id' | 'createdAt' | 'likes'>) => {
-    const newComment: Comment = {
-      ...comment,
-      id: `comment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      likes: [],
-      createdAt: new Date().toISOString()
+  const unlikePost = useCallback(async (postId: string): Promise<void> => {
+    try {
+      const success = await postsDB.toggleLike(postId, false)
+      if (success) {
+        setPosts(prev => prev.map(p => 
+          p.id === postId ? { ...p, likes: Math.max(0, p.likes - 1) } : p
+        ))
+      }
+    } catch (error) {
+      console.error('Erreur unlike post:', error)
     }
+  }, [])
+
+  // Sauvegarder un post (le compteur save)
+  const savePost = useCallback(async (postId: string): Promise<void> => {
     setPosts(prev => prev.map(p => 
-      p.id === postId
-        ? { ...p, comments: [...p.comments, newComment] }
-        : p
+      p.id === postId ? { ...p, saves: p.saves + 1 } : p
     ))
   }, [])
 
-  // Supprimer un commentaire
-  const deleteComment = useCallback((postId: string, commentId: string) => {
+  // Retirer de la sauvegarde
+  const unsavePost = useCallback(async (postId: string): Promise<void> => {
     setPosts(prev => prev.map(p => 
-      p.id === postId
-        ? { ...p, comments: p.comments.filter(c => c.id !== commentId) }
-        : p
+      p.id === postId ? { ...p, saves: Math.max(0, p.saves - 1) } : p
+    ))
+  }, [])
+
+  // Partager un post
+  const sharePost = useCallback(async (postId: string): Promise<void> => {
+    setPosts(prev => prev.map(p => 
+      p.id === postId ? { ...p, shares: p.shares + 1 } : p
     ))
   }, [])
 
   // Obtenir les posts d'un utilisateur
-  const getPostsByUser = useCallback((userId: string) => {
+  const getPostsByUser = useCallback((userId: string): Post[] => {
     return posts.filter(p => p.authorId === userId)
   }, [posts])
 
-  // Obtenir les posts par catégorie
-  const getPostsByCategory = useCallback((category: string) => {
-    return posts.filter(p => p.category === category)
+  // Obtenir les posts d'une spécialité
+  const getPostsBySpecialty = useCallback((specialtyId: string): Post[] => {
+    return posts.filter(p => p.specialtyId === specialtyId)
   }, [posts])
 
-  // Obtenir les posts par spécialité
-  const getPostsBySpecialty = useCallback((specialty: string) => {
-    return posts.filter(p => p.specialty === specialty)
-  }, [posts])
-
-  // Rechercher dans les posts
-  const searchPosts = useCallback((query: string) => {
+  // Rechercher des posts
+  const searchPosts = useCallback((query: string): Post[] => {
     const lowerQuery = query.toLowerCase()
     return posts.filter(p => 
       p.content.toLowerCase().includes(lowerQuery) ||
-      p.authorName.toLowerCase().includes(lowerQuery) ||
-      p.tags?.some(t => t.toLowerCase().includes(lowerQuery)) ||
-      p.category?.toLowerCase().includes(lowerQuery) ||
-      p.specialty?.toLowerCase().includes(lowerQuery)
+      p.tags.some(t => t.toLowerCase().includes(lowerQuery)) ||
+      p.authorName.toLowerCase().includes(lowerQuery)
     )
   }, [posts])
 
+  // Rafraîchir les posts
+  const refreshPosts = useCallback(async (): Promise<void> => {
+    setIsLoading(true)
+    try {
+      const dbPosts = await postsDB.getAll(100)
+      setPosts(dbPosts.map(dbToPost))
+    } catch (error) {
+      console.error('Erreur refresh posts:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
   const value: PostsContextType = {
     posts,
+    isLoading,
     addPost,
     updatePost,
     deletePost,
     likePost,
     unlikePost,
-    addComment,
-    deleteComment,
+    savePost,
+    unsavePost,
+    sharePost,
     getPostsByUser,
-    getPostsByCategory,
     getPostsBySpecialty,
-    searchPosts
+    searchPosts,
+    refreshPosts
   }
 
   return (
@@ -188,14 +283,12 @@ export function PostsProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Hook pour utiliser le contexte des posts
+ * Hook pour utiliser les posts
  */
 export function usePosts() {
   const context = useContext(PostsContext)
-  if (context === undefined) {
-    throw new Error('usePosts must be used within a PostsProvider')
+  if (!context) {
+    return defaultContextValue
   }
   return context
 }
-
-

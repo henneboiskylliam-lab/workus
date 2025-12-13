@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   FileText, Download, Plus, Trash2, GripVertical, Eye, EyeOff,
   User, Briefcase, GraduationCap, Code, Award, Languages, Heart,
-  Mail, Phone, MapPin, Globe, Linkedin, Github, Save, Check
+  Mail, Phone, MapPin, Globe, Linkedin, Github, Save, Check, Upload, Cloud
 } from 'lucide-react'
+import { useAuth } from '../../contexts/AuthContext'
+import { storageDB } from '../../lib/dbService'
+import { supabase, isSupabaseConfigured } from '../../lib/supabase'
 
 const CV_STORAGE_KEY = 'workus_cv_data'
 
@@ -77,39 +80,130 @@ const defaultPersonalInfo: PersonalInfo = {
 }
 
 /**
- * CVBuilder - Constructeur de CV complet avec sauvegarde locale
+ * CVBuilder - Constructeur de CV complet avec sauvegarde en DB
+ * 
+ * RÈGLE D'OR: Le CV est sauvegardé en base de données (Supabase ou local)
+ * Les fichiers PDF sont uploadés sur Supabase Storage
  */
 export function CVBuilder({ className = '' }: CVBuilderProps) {
+  const { user } = useAuth()
   const [personalInfo, setPersonalInfo] = useState<PersonalInfo>(defaultPersonalInfo)
   const [sections, setSections] = useState<CVSection[]>(defaultSections)
   const [showPreview, setShowPreview] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
   const [showSaveToast, setShowSaveToast] = useState(false)
+  const [toastMessage, setToastMessage] = useState('')
   const [activeTab, setActiveTab] = useState<'info' | 'sections'>('info')
+  const [cvUrl, setCvUrl] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Charger les données depuis localStorage
+  // Charger les données depuis la DB ou localStorage
   useEffect(() => {
-    const stored = localStorage.getItem(CV_STORAGE_KEY)
-    if (stored) {
-      try {
-        const data = JSON.parse(stored)
-        if (data.personalInfo) setPersonalInfo(data.personalInfo)
-        if (data.sections) setSections(data.sections)
-      } catch {
-        // Ignorer les erreurs de parsing
+    const loadCV = async () => {
+      // D'abord charger depuis localStorage (rapide)
+      const stored = localStorage.getItem(CV_STORAGE_KEY)
+      if (stored) {
+        try {
+          const data = JSON.parse(stored)
+          if (data.personalInfo) setPersonalInfo(data.personalInfo)
+          if (data.sections) setSections(data.sections)
+        } catch {
+          // Ignorer les erreurs de parsing
+        }
+      }
+
+      // Si Supabase est configuré et l'utilisateur est connecté, charger depuis la DB
+      if (isSupabaseConfigured && supabase && user?.id) {
+        try {
+          const { data } = await supabase
+            .from('user_data')
+            .select('cv_data, cv_url')
+            .eq('user_id', user.id)
+            .single()
+          
+          if (data?.cv_data) {
+            const cvData = data.cv_data as { personalInfo?: PersonalInfo; sections?: CVSection[] }
+            if (cvData.personalInfo) setPersonalInfo(cvData.personalInfo)
+            if (cvData.sections) setSections(cvData.sections)
+          }
+          if (data?.cv_url) {
+            setCvUrl(data.cv_url)
+          }
+        } catch (error) {
+          console.error('Erreur chargement CV depuis DB:', error)
+        }
       }
     }
-  }, [])
 
-  // Sauvegarder automatiquement
+    loadCV()
+  }, [user?.id])
+
+  // Sauvegarder le CV (en DB si possible, sinon localStorage)
   const saveCV = async () => {
     setIsSaving(true)
     const data = { personalInfo, sections }
+    
+    // Toujours sauvegarder en local pour accès rapide
     localStorage.setItem(CV_STORAGE_KEY, JSON.stringify(data))
-    await new Promise(resolve => setTimeout(resolve, 300))
+
+    // Si Supabase est configuré, sauvegarder aussi en DB
+    if (isSupabaseConfigured && supabase && user?.id) {
+      try {
+        await supabase
+          .from('user_data')
+          .update({ cv_data: data })
+          .eq('user_id', user.id)
+      } catch (error) {
+        console.error('Erreur sauvegarde CV en DB:', error)
+      }
+    }
+
     setIsSaving(false)
+    setToastMessage('CV sauvegardé !')
     setShowSaveToast(true)
     setTimeout(() => setShowSaveToast(false), 2000)
+  }
+
+  // Upload du CV en PDF
+  const handleUploadCV = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file || !user?.id) return
+
+    if (file.type !== 'application/pdf') {
+      setToastMessage('Seuls les fichiers PDF sont acceptés')
+      setShowSaveToast(true)
+      setTimeout(() => setShowSaveToast(false), 2000)
+      return
+    }
+
+    if (file.size > 10 * 1024 * 1024) { // 10MB max
+      setToastMessage('Le fichier ne doit pas dépasser 10MB')
+      setShowSaveToast(true)
+      setTimeout(() => setShowSaveToast(false), 2000)
+      return
+    }
+
+    setIsUploading(true)
+    try {
+      const url = await storageDB.uploadCV(user.id, file)
+      if (url) {
+        setCvUrl(url)
+        setToastMessage('CV uploadé avec succès !')
+      } else {
+        setToastMessage('Erreur lors de l\'upload')
+      }
+    } catch (error) {
+      console.error('Erreur upload CV:', error)
+      setToastMessage('Erreur lors de l\'upload')
+    } finally {
+      setIsUploading(false)
+      setShowSaveToast(true)
+      setTimeout(() => setShowSaveToast(false), 2000)
+    }
+
+    // Reset input
+    event.target.value = ''
   }
 
   const updatePersonalInfo = (field: keyof PersonalInfo, value: string) => {

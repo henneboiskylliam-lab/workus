@@ -11,6 +11,7 @@ import { ActivityProvider } from './contexts/ActivityContext'
 import { HelpCenterProvider } from './contexts/HelpCenterContext'
 import { Layout } from './components/layout/Layout'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
+import { DatabaseProvider } from './db'
 
 // Pages
 import { HomePage } from './pages/HomePage'
@@ -150,13 +151,16 @@ function AppRoutes() {
  * Application principale Work Us
  * Architecture modulaire avec routing centralisé et gestion des rôles
  * Enveloppée dans un ErrorBoundary global pour éviter les crashes
+ * Utilise IndexedDB via Dexie.js pour la persistance des données
  */
 function App() {
   return (
     <ErrorBoundary>
-      <AppProviders>
-        <AppRoutes />
-      </AppProviders>
+      <DatabaseProvider>
+        <AppProviders>
+          <AppRoutes />
+        </AppProviders>
+      </DatabaseProvider>
     </ErrorBoundary>
   )
 }

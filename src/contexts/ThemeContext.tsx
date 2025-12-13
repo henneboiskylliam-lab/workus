@@ -1,134 +1,180 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { useAuth } from './AuthContext'
+import { settingsDB } from '../lib/dbService'
 
-type Theme = 'dark' | 'light'
+/**
+ * ThemeContext - Gère le thème avec persistance en base de données
+ * 
+ * RÈGLE D'OR: Chaque changement de thème est persisté immédiatement
+ */
+
+export type Theme = 'light' | 'dark' | 'system'
 
 interface ThemeContextType {
   theme: Theme
-  toggleTheme: () => void
-  setTheme: (theme: Theme) => void
+  effectiveTheme: 'light' | 'dark'
+  setTheme: (theme: Theme) => Promise<void>
+  toggleTheme: () => Promise<void>
+  isLoading: boolean
 }
 
-const STORAGE_KEY = 'workus_theme'
+// Valeur par défaut
 const DEFAULT_THEME: Theme = 'dark'
 
-// Valeur par défaut non-nulle pour éviter les crashes
 const defaultContextValue: ThemeContextType = {
   theme: DEFAULT_THEME,
-  toggleTheme: () => {
-    // Fonction vide par défaut - sera remplacée par le Provider
-    console.warn('useTheme: toggleTheme called outside of ThemeProvider')
-  },
-  setTheme: () => {
-    // Fonction vide par défaut - sera remplacée par le Provider
-    console.warn('useTheme: setTheme called outside of ThemeProvider')
-  }
+  effectiveTheme: 'dark',
+  setTheme: async () => {},
+  toggleTheme: async () => {},
+  isLoading: false
 }
 
-// Créer le contexte avec une valeur par défaut non-undefined
 const ThemeContext = createContext<ThemeContextType>(defaultContextValue)
 
-/**
- * Récupère le thème initial de manière sécurisée
- */
-function getInitialTheme(): Theme {
-  // Vérifier si on est côté client
-  if (typeof window === 'undefined') {
-    return DEFAULT_THEME
-  }
-
-  try {
-    // Récupérer le thème depuis localStorage
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored === 'light' || stored === 'dark') {
-      return stored
-    }
-    
-    // Sinon, utiliser la préférence système
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-      return 'light'
-    }
-  } catch {
-    // En cas d'erreur (localStorage désactivé, etc.), retourner le thème par défaut
-  }
-  
-  return DEFAULT_THEME
+interface ThemeProviderProps {
+  children: ReactNode
 }
 
 /**
- * ThemeProvider - Gère le thème de l'application (clair/sombre)
+ * Détermine le thème effectif basé sur les préférences système
  */
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  // Initialiser avec une valeur explicite
+function getEffectiveTheme(theme: Theme): 'light' | 'dark' {
+  if (theme === 'system') {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    }
+    return 'dark'
+  }
+  return theme
+}
+
+/**
+ * Applique le thème au document
+ */
+function applyTheme(effectiveTheme: 'light' | 'dark') {
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.remove('light', 'dark')
+    document.documentElement.classList.add(effectiveTheme)
+  }
+}
+
+/**
+ * ThemeProvider - Charge et persiste le thème depuis la DB
+ */
+export function ThemeProvider({ children }: ThemeProviderProps) {
+  const { user, isAuthenticated } = useAuth()
   const [theme, setThemeState] = useState<Theme>(DEFAULT_THEME)
+  const [isLoading, setIsLoading] = useState(true)
   const [isInitialized, setIsInitialized] = useState(false)
 
-  // Initialiser le thème côté client uniquement
-  useEffect(() => {
-    const initialTheme = getInitialTheme()
-    setThemeState(initialTheme)
-    setIsInitialized(true)
-  }, [])
+  // Thème effectif (résolu pour 'system')
+  const effectiveTheme = getEffectiveTheme(theme)
 
-  // Appliquer le thème au document
+  // Charger le thème depuis la DB au mount et quand l'utilisateur change
   useEffect(() => {
-    if (!isInitialized) return
+    const loadTheme = async () => {
+      setIsLoading(true)
+      
+      try {
+        // D'abord, vérifier le localStorage pour un chargement rapide
+        const cachedTheme = localStorage.getItem('workus_theme') as Theme | null
+        if (cachedTheme && ['light', 'dark', 'system'].includes(cachedTheme)) {
+          setThemeState(cachedTheme)
+          applyTheme(getEffectiveTheme(cachedTheme))
+        }
+
+        // Puis charger depuis la DB si l'utilisateur est connecté
+        if (isAuthenticated && user?.id) {
+          const settings = await settingsDB.get(user.id)
+          if (settings?.theme) {
+            setThemeState(settings.theme)
+            localStorage.setItem('workus_theme', settings.theme)
+            applyTheme(getEffectiveTheme(settings.theme))
+          }
+        }
+      } catch (error) {
+        console.error('Erreur chargement thème:', error)
+      } finally {
+        setIsLoading(false)
+        setIsInitialized(true)
+      }
+    }
+
+    loadTheme()
+  }, [user?.id, isAuthenticated])
+
+  // Appliquer le thème quand il change
+  useEffect(() => {
+    if (isInitialized) {
+      applyTheme(effectiveTheme)
+    }
+  }, [effectiveTheme, isInitialized])
+
+  // Écouter les changements de préférences système
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     
-    try {
-      const root = document.documentElement
-      
-      if (theme === 'dark') {
-        root.classList.add('dark')
-        root.classList.remove('light')
-      } else {
-        root.classList.add('light')
-        root.classList.remove('dark')
+    const handleChange = () => {
+      if (theme === 'system') {
+        applyTheme(getEffectiveTheme('system'))
       }
-      
-      // Sauvegarder dans localStorage
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_KEY, theme)
+    }
+
+    mediaQuery.addEventListener('change', handleChange)
+    return () => mediaQuery.removeEventListener('change', handleChange)
+  }, [theme])
+
+  // Changer le thème (persiste immédiatement)
+  const setTheme = useCallback(async (newTheme: Theme): Promise<void> => {
+    // Mettre à jour le state immédiatement
+    setThemeState(newTheme)
+    
+    // Sauvegarder en cache local pour chargement rapide
+    localStorage.setItem('workus_theme', newTheme)
+    
+    // Appliquer le thème
+    applyTheme(getEffectiveTheme(newTheme))
+
+    // Persister en base de données
+    if (user?.id) {
+      try {
+        await settingsDB.update(user.id, { theme: newTheme })
+      } catch (error) {
+        console.error('Erreur sauvegarde thème:', error)
       }
-    } catch {
-      // Ignorer les erreurs d'accès au DOM ou localStorage
     }
-  }, [theme, isInitialized])
+  }, [user?.id])
 
-  const toggleTheme = () => {
-    setThemeState(prev => prev === 'dark' ? 'light' : 'dark')
-  }
+  // Toggle entre dark et light
+  const toggleTheme = useCallback(async (): Promise<void> => {
+    const newTheme: Theme = effectiveTheme === 'dark' ? 'light' : 'dark'
+    await setTheme(newTheme)
+  }, [effectiveTheme, setTheme])
 
-  const setTheme = (newTheme: Theme) => {
-    if (newTheme === 'dark' || newTheme === 'light') {
-      setThemeState(newTheme)
-    }
-  }
-
-  const contextValue: ThemeContextType = {
+  const value: ThemeContextType = {
     theme,
+    effectiveTheme,
+    setTheme,
     toggleTheme,
-    setTheme
+    isLoading
   }
 
   return (
-    <ThemeContext.Provider value={contextValue}>
+    <ThemeContext.Provider value={value}>
       {children}
     </ThemeContext.Provider>
   )
 }
 
 /**
- * Hook pour utiliser le contexte du thème
- * Retourne toujours une valeur valide, même hors Provider
+ * Hook pour utiliser le thème
  */
-export function useTheme(): ThemeContextType {
+export function useTheme() {
   const context = useContext(ThemeContext)
-  
-  // Le contexte a toujours une valeur par défaut, donc il ne sera jamais undefined
-  // Mais on ajoute une protection supplémentaire par sécurité
   if (!context) {
-    console.warn('useTheme: Context is undefined, using default values')
     return defaultContextValue
   }
-  
   return context
 }

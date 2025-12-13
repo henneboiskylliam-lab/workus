@@ -9,7 +9,26 @@ import {
 import { useAuth } from '../contexts/AuthContext'
 import { useUserData } from '../contexts/UserDataContext'
 import { useContentManagement } from '../contexts/ContentManagementContext'
-import specialtyContentData from '../data/specialtyContent.json'
+
+// Données de contenu statique (informations du programme partenaire)
+const specialtyContentData = {
+  paidFormations: {} as Record<string, any[]>,
+  partnerApplicationInfo: {
+    requirements: [
+      "Avoir une expertise reconnue dans votre domaine",
+      "Posséder un minimum de 2 ans d'expérience professionnelle",
+      "Être capable de produire du contenu de qualité régulièrement",
+      "Accepter les conditions générales du programme partenaire"
+    ],
+    benefits: [
+      "Accès à notre audience de milliers d'apprenants",
+      "Outils de création et de gestion de contenu premium",
+      "Support dédié de notre équipe",
+      "Revenus partagés sur vos formations payantes"
+    ],
+    contactEmail: "partenaires@workus.com"
+  }
+}
 
 type TabType = 'feed' | 'formations'
 

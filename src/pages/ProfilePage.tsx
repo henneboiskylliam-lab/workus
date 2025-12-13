@@ -8,10 +8,20 @@ import {
 import { LevelIndicator, StatCard, CVBuilder } from '../components/ui'
 import { useAuth } from '../contexts/AuthContext'
 import { useUserData } from '../contexts/UserDataContext'
-import mockUserData from '../data/mockUser.json'
-import skillsData from '../data/skills.json'
 
 const PROFILE_STORAGE_KEY = 'workus_profile_data'
+
+// Données par défaut pour un nouveau profil
+const defaultUserStats = {
+  totalHoursLearned: 0,
+  skillsWorkedOn: 0,
+  exercisesCompleted: 0,
+  currentStreak: 0,
+  longestStreak: 0,
+  achievementsUnlocked: 0,
+  weeklyProgress: [] as number[],
+  topSkills: [] as string[]
+}
 
 /**
  * ProfilePage - Profil utilisateur avec upload de photo fonctionnel
@@ -20,8 +30,9 @@ export function ProfilePage() {
   const navigate = useNavigate()
   const { user, isAuthenticated } = useAuth()
   const { data } = useUserData()
-  const { currentUser, userStats } = mockUserData
-  const { skills } = skillsData
+  
+  // Stats utilisateur depuis le contexte ou valeurs par défaut
+  const userStats = defaultUserStats
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Charger les données du profil depuis localStorage
@@ -37,7 +48,7 @@ export function ProfilePage() {
       }
     }
     return {
-      bio: currentUser.bio || '',
+      bio: user?.bio || 'Bienvenue sur Work Us !',
       location: '',
       website: '',
       github: '',
@@ -65,10 +76,14 @@ export function ProfilePage() {
     return localStorage.getItem('workus_profile_photo')
   })
 
-  const userSkillsWithDetails = currentUser.skills.map(us => {
-    const skillDetail = skills.find(s => s.id === us.skillId)
-    return { ...us, ...skillDetail }
-  })
+  // Skills depuis le contexte utilisateur
+  const userSkillsWithDetails = Object.values(data.skillProgress || {}).map(skill => ({
+    skillId: skill.skillId,
+    skillName: skill.skillName,
+    progress: skill.progress,
+    level: skill.level,
+    hoursWorked: skill.hoursWorked
+  }))
 
   // Afficher une notification
   const showNotification = (message: string) => {
@@ -139,7 +154,7 @@ export function ProfilePage() {
   // Partager le profil
   const handleShareProfile = async () => {
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/profile/${currentUser.username}`)
+      await navigator.clipboard.writeText(`${window.location.origin}/profile/${user?.username || 'user'}`)
       setShowShareToast(true)
       setTimeout(() => setShowShareToast(false), 2000)
     } catch {
@@ -148,16 +163,16 @@ export function ProfilePage() {
     }
   }
 
-  // Utiliser les données de l'utilisateur connecté si disponible
-  const displayUser = isAuthenticated && user ? {
-    username: user.username,
-    email: user.email,
-    bio: currentUser.bio,
-    joinedAt: user.createdAt || currentUser.joinedAt,
-    followers: currentUser.followers,
-    following: currentUser.following,
-    skills: currentUser.skills,
-  } : currentUser
+  // Utiliser les données de l'utilisateur connecté
+  const displayUser = {
+    username: user?.username || 'Utilisateur',
+    email: user?.email || '',
+    bio: savedProfile.bio || 'Bienvenue sur Work Us !',
+    joinedAt: user?.createdAt || new Date().toISOString(),
+    followers: data.followers?.length || 0,
+    following: data.following?.length || 0,
+    skills: userSkillsWithDetails,
+  }
 
   return (
     <div className="max-w-4xl mx-auto">

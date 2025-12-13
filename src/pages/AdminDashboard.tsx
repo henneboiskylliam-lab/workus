@@ -14,8 +14,7 @@ import { usePosts } from '../contexts/PostsContext'
 import { useReports } from '../contexts/ReportsContext'
 import { useAdminStats } from '../contexts/AdminStatsContext'
 import { useActivity } from '../contexts/ActivityContext'
-import adminData from '../data/adminData.json'
-import usersData from '../data/users.json'
+import { useUsers } from '../db'
 
 // Interface pour les utilisateurs
 interface DisplayUser {
@@ -26,29 +25,7 @@ interface DisplayUser {
   isActive: boolean
   isVerified: boolean
   joinedAt: string
-  avatar?: string
-}
-
-// Récupérer les utilisateurs enregistrés depuis localStorage
-const getRegisteredUsers = (): DisplayUser[] => {
-  const stored = localStorage.getItem('workus_registered_users')
-  if (stored) {
-    try {
-      const users = JSON.parse(stored)
-      return users.map((u: any) => ({
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        role: u.role || 'user',
-        isActive: u.isActive ?? true,
-        isVerified: u.isVerified ?? false,
-        joinedAt: u.joinedAt || new Date().toISOString()
-      }))
-    } catch {
-      return []
-    }
-  }
-  return []
+  avatar?: string | null
 }
 
 type AdminTab = 'overview' | 'users' | 'content' | 'categories' | 'reports' | 'settings'
@@ -110,57 +87,30 @@ export function AdminDashboard() {
   const { reports: contextReports, getPendingCount } = useReports()
   const { stats: adminStats, getStatsForPeriod, getUserEvolution, recordDailySnapshot } = useAdminStats()
   const { activities, getRecentActivities, getActivityTimeStats, recordGlobalActivity, userActivities } = useActivity()
+  
+  // Utilisateurs depuis IndexedDB
+  const { users: dbUsers } = useUsers()
 
-  // Fonction pour charger tous les utilisateurs
-  const loadAllUsers = () => {
-    const defaultUsers: DisplayUser[] = usersData.users.map(u => ({
-      id: u.id,
-      username: u.username,
-      email: u.email,
-      role: u.role as DisplayUser['role'],
-      isActive: u.isActive,
-      isVerified: u.isVerified,
-      joinedAt: u.joinedAt
-    }))
-    
-    const registeredUsers = getRegisteredUsers()
-    
-    // Combiner en évitant les doublons (par email)
-    const combined = [...defaultUsers]
-    registeredUsers.forEach(regUser => {
-      if (!combined.find(u => u.email === regUser.email)) {
-        combined.push(regUser)
-      }
-    })
-    
-    // Trier par date d'inscription (plus récent en premier)
-    combined.sort((a, b) => new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime())
-    
-    setAllUsers(combined)
-  }
-
-  // Charger tous les utilisateurs au démarrage et rafraîchir en temps réel
+  // Charger tous les utilisateurs depuis IndexedDB
   useEffect(() => {
-    loadAllUsers()
-    
-    // Rafraîchir la liste des utilisateurs toutes les 3 secondes pour voir les nouveaux inscrits
-    const interval = setInterval(() => {
-      loadAllUsers()
-    }, 3000)
-    
-    // Écouter les changements dans localStorage (quand un autre onglet modifie les données)
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'workus_registered_users') {
-        loadAllUsers()
-      }
+    if (Array.isArray(dbUsers) && dbUsers.length > 0) {
+      const displayUsers: DisplayUser[] = dbUsers.map(u => ({
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        role: u.role as DisplayUser['role'],
+        isActive: u.isActive,
+        isVerified: u.isVerified,
+        joinedAt: u.joinedAt,
+        avatar: u.avatar
+      }))
+      
+      // Trier par date d'inscription (plus récent en premier)
+      displayUsers.sort((a, b) => new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime())
+      
+      setAllUsers(displayUsers)
     }
-    window.addEventListener('storage', handleStorageChange)
-    
-    return () => {
-      clearInterval(interval)
-      window.removeEventListener('storage', handleStorageChange)
-    }
-  }, [activeTab])
+  }, [dbUsers])
 
   // Enregistrer le snapshot quotidien des utilisateurs
   useEffect(() => {
@@ -382,7 +332,18 @@ export function AdminDashboard() {
     displayToast(newStatus ? 'Compte activé' : 'Compte désactivé', 'success')
   }
   
-  const { recentActivity, pendingContent, reports, siteSettings } = adminData
+  // Données admin (seront chargées depuis IndexedDB dans une future version)
+  const siteSettings = {
+    siteName: 'Work Us',
+    siteDescription: 'Plateforme d\'apprentissage et de mise en relation professionnelle',
+    maintenanceMode: false,
+    registrationEnabled: true,
+    contentModerationEnabled: true,
+    maxUploadSize: 104857600,
+    allowedFileTypes: ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/webm', 'application/pdf'],
+    defaultUserRole: 'user',
+    emailNotificationsEnabled: true
+  }
 
   // Statistiques dynamiques basées sur les données réelles
   const totalUsers = allUsers.length

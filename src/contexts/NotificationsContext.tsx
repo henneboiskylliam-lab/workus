@@ -1,219 +1,237 @@
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { useAuth } from './AuthContext'
+import { notificationsDB, DBNotification } from '../lib/dbService'
 
 /**
  * Types pour les notifications
+ * 
+ * RÈGLE D'OR: Les données sont chargées depuis la DB, pas stockées uniquement en useState
  */
+
+export type NotificationType = 
+  | 'like' | 'save' | 'share' | 'repost' | 'follow' 
+  | 'message' | 'comment' | 'info' | 'success' 
+  | 'warning' | 'error' | 'system' | 'report' | 'mention'
+
 export interface Notification {
   id: string
-  userId?: string
-  type: 'info' | 'success' | 'warning' | 'error' | 'message' | 'follow' | 'like' | 'comment' | 'system' | 'report' | 'share' | 'save' | 'mention'
+  type: NotificationType
   title: string
   message: string
-  read: boolean
-  link?: string
+  isRead: boolean
+  read?: boolean // Alias pour compatibilité
+  createdAt: string
   fromUserId?: string
   fromUserName?: string
   targetId?: string
-  targetType?: 'post' | 'comment' | 'user' | 'report' | 'discussion' | 'profile'
+  targetType?: string
   targetUrl?: string
-  createdAt: string
 }
 
 interface NotificationsContextType {
   notifications: Notification[]
   unreadCount: number
-  addNotification: (notification: Omit<Notification, 'id' | 'createdAt' | 'read'>) => void
-  markAsRead: (id: string) => void
-  markAllAsRead: (userId?: string) => void
-  deleteNotification: (id: string) => void
-  clearAll: (userId?: string) => void
-  clearAllNotifications: () => void
-  getUnreadCount: (userId?: string) => number
-  getUserNotifications: (userId?: string) => Notification[]
+  isLoading: boolean
+  addNotification: (notification: Omit<Notification, 'id' | 'isRead' | 'createdAt'>) => Promise<Notification | null>
+  markAsRead: (id: string) => Promise<void>
+  markAllAsRead: () => Promise<void>
+  deleteNotification: (id: string) => Promise<void>
+  clearAllNotifications: () => Promise<void>
+  getNotificationsByType: (type: NotificationType) => Notification[]
+  refreshNotifications: () => Promise<void>
 }
 
-const STORAGE_KEY = 'workus_notifications'
-
-// Valeur par défaut complète pour éviter les crashes
+// Valeur par défaut pour éviter les crashes
 const defaultContextValue: NotificationsContextType = {
   notifications: [],
   unreadCount: 0,
-  addNotification: () => {
-    console.warn('useNotifications: addNotification called outside of NotificationsProvider')
-  },
-  markAsRead: () => {
-    console.warn('useNotifications: markAsRead called outside of NotificationsProvider')
-  },
-  markAllAsRead: () => {
-    console.warn('useNotifications: markAllAsRead called outside of NotificationsProvider')
-  },
-  deleteNotification: () => {
-    console.warn('useNotifications: deleteNotification called outside of NotificationsProvider')
-  },
-  clearAll: () => {
-    console.warn('useNotifications: clearAll called outside of NotificationsProvider')
-  },
-  clearAllNotifications: () => {
-    console.warn('useNotifications: clearAllNotifications called outside of NotificationsProvider')
-  },
-  getUnreadCount: () => 0,
-  getUserNotifications: () => []
+  isLoading: false,
+  addNotification: async () => null,
+  markAsRead: async () => {},
+  markAllAsRead: async () => {},
+  deleteNotification: async () => {},
+  clearAllNotifications: async () => {},
+  getNotificationsByType: () => [],
+  refreshNotifications: async () => {}
 }
 
-// Créer le contexte avec une valeur par défaut non-undefined
 const NotificationsContext = createContext<NotificationsContextType>(defaultContextValue)
 
+interface NotificationsProviderProps {
+  children: ReactNode
+}
+
 /**
- * Charge les notifications depuis le localStorage de manière sécurisée
+ * Convertit une notification DB vers le format de l'application
  */
-function loadNotificationsFromStorage(): Notification[] {
-  if (typeof window === 'undefined') {
-    return []
+function dbToNotification(dbNotif: DBNotification): Notification {
+  return {
+    id: dbNotif.id,
+    type: dbNotif.type as NotificationType,
+    title: dbNotif.title,
+    message: dbNotif.message,
+    isRead: dbNotif.is_read,
+    read: dbNotif.is_read,
+    createdAt: dbNotif.created_at,
+    fromUserId: dbNotif.from_user_id || undefined,
+    targetId: dbNotif.target_id || undefined,
+    targetUrl: dbNotif.target_url || undefined
   }
-  
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      // Vérifier que c'est bien un tableau
-      if (Array.isArray(parsed)) {
-        return parsed
+}
+
+/**
+ * NotificationsProvider - Gère les notifications depuis la base de données
+ * 
+ * ✅ APRÈS: Charge depuis DB à chaque mount et user change
+ * ✅ Chaque modification écrit en base ET met à jour le state
+ */
+export function NotificationsProvider({ children }: NotificationsProviderProps) {
+  const { user, isAuthenticated } = useAuth()
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+
+  // Charger les notifications depuis la DB quand l'utilisateur change
+  useEffect(() => {
+    const loadNotifications = async () => {
+      if (!isAuthenticated || !user?.id) {
+        setNotifications([])
+        return
+      }
+
+      setIsLoading(true)
+      try {
+        const dbNotifications = await notificationsDB.getAll(user.id)
+        setNotifications(dbNotifications.map(dbToNotification))
+      } catch (error) {
+        console.error('Erreur chargement notifications:', error)
+        setNotifications([])
+      } finally {
+        setIsLoading(false)
       }
     }
-  } catch {
-    // Ignorer les erreurs de parsing
-  }
-  
-  return []
-}
 
-/**
- * Sauvegarde les notifications de manière sécurisée
- */
-function saveNotificationsToStorage(notifications: Notification[]): void {
-  if (typeof window === 'undefined') {
-    return
-  }
-  
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications))
-  } catch {
-    // Ignorer les erreurs (localStorage plein, désactivé, etc.)
-  }
-}
+    loadNotifications()
+  }, [user?.id, isAuthenticated])
 
-/**
- * NotificationsProvider - Gère les notifications utilisateur
- */
-export function NotificationsProvider({ children }: { children: ReactNode }) {
-  // Initialiser avec un tableau vide explicite
-  const [notifications, setNotifications] = useState<Notification[]>([])
+  // Calculer le nombre de non lues
+  const unreadCount = notifications.filter(n => !n.isRead).length
 
-  // Charger les notifications au démarrage (côté client uniquement)
-  useEffect(() => {
-    const loaded = loadNotificationsFromStorage()
-    setNotifications(loaded)
-  }, [])
+  // Ajouter une notification (écrit en DB + met à jour state)
+  const addNotification = useCallback(async (
+    notification: Omit<Notification, 'id' | 'isRead' | 'createdAt'>
+  ): Promise<Notification | null> => {
+    if (!user?.id) return null
 
-  // Sauvegarder automatiquement
-  useEffect(() => {
-    saveNotificationsToStorage(notifications)
-  }, [notifications])
-
-  // Calcul sécurisé du nombre de notifications non lues
-  const safeNotifications = Array.isArray(notifications) ? notifications : []
-  const unreadCount = safeNotifications.filter(n => n && !n.read).length
-
-  // Ajouter une notification
-  const addNotification = useCallback((notification: Omit<Notification, 'id' | 'createdAt' | 'read'>) => {
-    const newNotification: Notification = {
-      ...notification,
-      id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      read: false,
-      createdAt: new Date().toISOString()
-    }
-    setNotifications(prev => {
-      const safePrev = Array.isArray(prev) ? prev : []
-      return [newNotification, ...safePrev]
-    })
-  }, [])
-
-  // Marquer comme lu
-  const markAsRead = useCallback((id: string) => {
-    if (!id) return
-    setNotifications(prev => {
-      const safePrev = Array.isArray(prev) ? prev : []
-      return safePrev.map(n => 
-        n && n.id === id ? { ...n, read: true } : n
-      )
-    })
-  }, [])
-
-  // Marquer toutes comme lues
-  const markAllAsRead = useCallback((userId?: string) => {
-    setNotifications(prev => {
-      const safePrev = Array.isArray(prev) ? prev : []
-      return safePrev.map(n => 
-        n && (!userId || n.userId === userId) ? { ...n, read: true } : n
-      )
-    })
-  }, [])
-
-  // Supprimer une notification
-  const deleteNotification = useCallback((id: string) => {
-    if (!id) return
-    setNotifications(prev => {
-      const safePrev = Array.isArray(prev) ? prev : []
-      return safePrev.filter(n => n && n.id !== id)
-    })
-  }, [])
-
-  // Effacer toutes les notifications d'un utilisateur
-  const clearAll = useCallback((userId?: string) => {
-    if (userId) {
-      setNotifications(prev => {
-        const safePrev = Array.isArray(prev) ? prev : []
-        return safePrev.filter(n => n && n.userId !== userId)
+    try {
+      const dbNotif = await notificationsDB.create({
+        user_id: user.id,
+        type: notification.type,
+        title: notification.title,
+        message: notification.message,
+        from_user_id: notification.fromUserId || null,
+        target_id: notification.targetId || null,
+        target_url: notification.targetUrl || null
       })
-    } else {
+
+      if (dbNotif) {
+        const newNotif = dbToNotification(dbNotif)
+        setNotifications(prev => [newNotif, ...prev])
+        return newNotif
+      }
+    } catch (error) {
+      console.error('Erreur création notification:', error)
+    }
+    return null
+  }, [user?.id])
+
+  // Marquer comme lue (écrit en DB + met à jour state)
+  const markAsRead = useCallback(async (id: string): Promise<void> => {
+    try {
+      const success = await notificationsDB.markAsRead(id)
+      if (success) {
+        setNotifications(prev => 
+          prev.map(n => n.id === id ? { ...n, isRead: true, read: true } : n)
+        )
+      }
+    } catch (error) {
+      console.error('Erreur markAsRead:', error)
+    }
+  }, [])
+
+  // Marquer toutes comme lues (écrit en DB + met à jour state)
+  const markAllAsRead = useCallback(async (): Promise<void> => {
+    if (!user?.id) return
+
+    try {
+      const success = await notificationsDB.markAllAsRead(user.id)
+      if (success) {
+        setNotifications(prev => 
+          prev.map(n => ({ ...n, isRead: true, read: true }))
+        )
+      }
+    } catch (error) {
+      console.error('Erreur markAllAsRead:', error)
+    }
+  }, [user?.id])
+
+  // Supprimer une notification (supprime en DB + met à jour state)
+  const deleteNotification = useCallback(async (id: string): Promise<void> => {
+    try {
+      const success = await notificationsDB.delete(id)
+      if (success) {
+        setNotifications(prev => prev.filter(n => n.id !== id))
+      }
+    } catch (error) {
+      console.error('Erreur deleteNotification:', error)
+    }
+  }, [])
+
+  // Supprimer toutes les notifications
+  const clearAllNotifications = useCallback(async (): Promise<void> => {
+    if (!user?.id) return
+
+    try {
+      // Supprimer une par une (pas de méthode bulk dans le service)
+      for (const notif of notifications) {
+        await notificationsDB.delete(notif.id)
+      }
       setNotifications([])
+    } catch (error) {
+      console.error('Erreur clearAllNotifications:', error)
     }
-  }, [])
+  }, [user?.id, notifications])
 
-  // Alias pour clearAll sans paramètre
-  const clearAllNotifications = useCallback(() => {
-    setNotifications([])
-  }, [])
-
-  // Obtenir le nombre de non lues (sécurisé)
-  const getUnreadCount = useCallback((userId?: string): number => {
-    const safeNotifs = Array.isArray(notifications) ? notifications : []
-    if (userId) {
-      return safeNotifs.filter(n => n && n.userId === userId && !n.read).length
-    }
-    return safeNotifs.filter(n => n && !n.read).length
+  // Filtrer par type
+  const getNotificationsByType = useCallback((type: NotificationType): Notification[] => {
+    return notifications.filter(n => n.type === type)
   }, [notifications])
 
-  // Obtenir les notifications d'un utilisateur (sécurisé)
-  const getUserNotifications = useCallback((userId?: string): Notification[] => {
-    const safeNotifs = Array.isArray(notifications) ? notifications : []
-    if (userId) {
-      return safeNotifs.filter(n => n && n.userId === userId)
+  // Rafraîchir depuis la DB
+  const refreshNotifications = useCallback(async (): Promise<void> => {
+    if (!user?.id) return
+
+    setIsLoading(true)
+    try {
+      const dbNotifications = await notificationsDB.getAll(user.id)
+      setNotifications(dbNotifications.map(dbToNotification))
+    } catch (error) {
+      console.error('Erreur refresh notifications:', error)
+    } finally {
+      setIsLoading(false)
     }
-    return safeNotifs
-  }, [notifications])
+  }, [user?.id])
 
   const value: NotificationsContextType = {
-    notifications: safeNotifications,
+    notifications,
     unreadCount,
+    isLoading,
     addNotification,
     markAsRead,
     markAllAsRead,
     deleteNotification,
-    clearAll,
     clearAllNotifications,
-    getUnreadCount,
-    getUserNotifications
+    getNotificationsByType,
+    refreshNotifications
   }
 
   return (
@@ -224,18 +242,13 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Hook pour utiliser le contexte des notifications
- * Retourne toujours une valeur valide, même hors Provider
+ * Hook pour utiliser les notifications
  */
-export function useNotifications(): NotificationsContextType {
+export function useNotifications() {
   const context = useContext(NotificationsContext)
-  
-  // Le contexte a toujours une valeur par défaut, donc il ne sera jamais undefined
-  // Mais on ajoute une protection supplémentaire par sécurité
+  // Retourner la valeur par défaut si le contexte n'est pas disponible
   if (!context) {
-    console.warn('useNotifications: Context is undefined, using default values')
     return defaultContextValue
   }
-  
   return context
 }

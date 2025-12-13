@@ -1,7 +1,18 @@
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Zap, ArrowRight, Play } from 'lucide-react'
-import homepageData from '../data/homepage.json'
+
+// Données de la page d'accueil (contenu statique du design)
+const homepageData = {
+  hero: {
+    phrases: [
+      { id: 1, text: "Apprenez ce que vous souhaitez", icon: "BookOpen", highlight: "ce que vous souhaitez" },
+      { id: 2, text: "Quand vous le souhaitez", icon: "Clock", highlight: "Quand vous le souhaitez" },
+      { id: 3, text: "Avec qui vous le souhaitez", icon: "Users", highlight: "qui vous le souhaitez" },
+      { id: 4, text: "Pour bâtir l'avenir que vous souhaitez", icon: "Rocket", highlight: "l'avenir que vous souhaitez" }
+    ]
+  }
+}
 
 const staggerContainer = {
   animate: {

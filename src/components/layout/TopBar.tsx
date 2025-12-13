@@ -34,9 +34,7 @@ import { useContentManagement } from '../../contexts/ContentManagementContext'
 import { usePosts } from '../../contexts/PostsContext'
 import { useHelpCenter } from '../../contexts/HelpCenterContext'
 import { InlineErrorBoundary } from '../ui/ErrorBoundary'
-
-// Import des données pour les utilisateurs
-import usersData from '../../data/users.json'
+import { useUsers } from '../../db'
 
 // Type pour les notifications (pour éviter les problèmes d'import)
 type NotificationType = 'like' | 'save' | 'share' | 'repost' | 'follow' | 'message' | 'comment' | 'info' | 'success' | 'warning' | 'error' | 'system' | 'report' | 'mention'
@@ -91,6 +89,9 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
   const postsContext = usePosts()
   const helpContext = useHelpCenter()
   
+  // Utilisateurs depuis la base de données IndexedDB
+  const { users: dbUsers } = useUsers()
+  
   // Extraire les valeurs avec fallbacks sécurisés
   const user = authContext?.user || null
   const isAuthenticated = authContext?.isAuthenticated || false
@@ -118,18 +119,6 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
   // Help center avec fallbacks
   const questions = Array.isArray(helpContext?.questions) ? helpContext.questions : []
   
-  // Récupérer les utilisateurs enregistrés
-  const getRegisteredUsers = () => {
-    const stored = localStorage.getItem('workus_registered_users')
-    if (stored) {
-      try {
-        return JSON.parse(stored)
-      } catch {
-        return []
-      }
-    }
-    return []
-  }
 
   // Filtrer les notifications par type (avec protection)
   const safeNotifications = Array.isArray(notifications) ? notifications : []
@@ -237,10 +226,8 @@ export function TopBar({ onMenuClick, sidebarCollapsed }: TopBarProps) {
         }
       })
       
-      // Recherche dans les utilisateurs - avec protection
-      const usersFromData = Array.isArray(usersData?.users) ? usersData.users : []
-      const registeredUsers = getRegisteredUsers()
-      const allUsers = [...usersFromData, ...(Array.isArray(registeredUsers) ? registeredUsers : [])]
+      // Recherche dans les utilisateurs - depuis IndexedDB
+      const allUsers = Array.isArray(dbUsers) ? dbUsers : []
       
       allUsers.forEach(u => {
         if (!u) return

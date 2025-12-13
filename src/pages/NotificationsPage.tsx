@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Bell, Trophy, MessageCircle, UserPlus, Sparkles, Info, Check, Trash2, CheckCheck } from 'lucide-react'
-import mockUserData from '../data/mockUser.json'
+import { useNotifications } from '../contexts/NotificationsContext'
 
-interface Notification {
+interface PageNotification {
   id: string
   type: string
   title: string
@@ -12,21 +12,34 @@ interface Notification {
   createdAt: string
 }
 
-const typeConfig = {
+const typeConfig: Record<string, { icon: typeof Trophy, color: string }> = {
   achievement: { icon: Trophy, color: 'from-amber-500 to-orange-500' },
   recommendation: { icon: Sparkles, color: 'from-primary-500 to-cyan-500' },
   follow: { icon: UserPlus, color: 'from-green-500 to-emerald-500' },
   comment: { icon: MessageCircle, color: 'from-secondary-500 to-pink-500' },
   system: { icon: Info, color: 'from-gray-500 to-slate-500' },
+  like: { icon: Sparkles, color: 'from-red-500 to-pink-500' },
+  save: { icon: Info, color: 'from-amber-500 to-yellow-500' },
+  info: { icon: Info, color: 'from-blue-500 to-cyan-500' },
 }
 
 /**
  * NotificationsPage - Centre de notifications avec interactions fonctionnelles
  */
 export function NotificationsPage() {
-  const [notifications, setNotifications] = useState<Notification[]>(
-    mockUserData.notifications.map(n => ({ ...n }))
-  )
+  const { notifications: contextNotifications, markAsRead, deleteNotification, markAllAsRead } = useNotifications()
+  
+  // Convertir les notifications du contexte au format de la page
+  const [notifications, setNotifications] = useState<PageNotification[]>(() => {
+    return (contextNotifications || []).map(n => ({
+      id: n.id,
+      type: n.type || 'system',
+      title: n.title || 'Notification',
+      message: n.message || '',
+      isRead: n.isRead || n.read || false,
+      createdAt: n.createdAt || new Date().toISOString()
+    }))
+  })
   const [showToast, setShowToast] = useState<string | null>(null)
 
   // Afficher une notification toast
