@@ -33,6 +33,46 @@ function supabaseUserToAuthUser(user: User, profile?: any): AuthUser {
 }
 
 /**
+ * Synchronise un utilisateur avec la liste publique
+ * Cette liste permet aux autres utilisateurs de voir les profils
+ */
+function syncUserToPublicList(authUser: AuthUser): void {
+  try {
+    const publicUsersKey = 'workus_public_users'
+    const existingData = localStorage.getItem(publicUsersKey)
+    let users: any[] = []
+    
+    if (existingData) {
+      users = JSON.parse(existingData)
+    }
+    
+    // Chercher si l'utilisateur existe déjà
+    const existingIndex = users.findIndex((u: any) => u.id === authUser.id)
+    
+    const publicUserData = {
+      id: authUser.id,
+      username: authUser.username,
+      role: authUser.role,
+      avatar: authUser.avatar,
+      bio: authUser.bio,
+      joinedAt: authUser.createdAt
+    }
+    
+    if (existingIndex >= 0) {
+      // Mettre à jour
+      users[existingIndex] = { ...users[existingIndex], ...publicUserData }
+    } else {
+      // Ajouter
+      users.push(publicUserData)
+    }
+    
+    localStorage.setItem(publicUsersKey, JSON.stringify(users))
+  } catch (error) {
+    console.error('Erreur sync public user:', error)
+  }
+}
+
+/**
  * Récupère l'utilisateur actuellement connecté
  */
 export async function getCurrentUser(): Promise<AuthUser | null> {
@@ -218,6 +258,8 @@ export async function signIn(email: string, password: string): Promise<AuthResul
           bio: user.bio
         }
         localStorage.setItem('workus_user', JSON.stringify(authUser))
+        // Synchroniser avec la liste publique
+        syncUserToPublicList(authUser)
         return { success: true, user: authUser }
       }
       return { success: false, error: 'Email ou mot de passe incorrect' }
@@ -251,6 +293,8 @@ export async function signIn(email: string, password: string): Promise<AuthResul
       
       // Stocker en local pour persistence
       localStorage.setItem('workus_user', JSON.stringify(authUser))
+      // Synchroniser avec la liste publique
+      syncUserToPublicList(authUser)
       
       return { success: true, user: authUser }
     }
@@ -303,6 +347,8 @@ export async function signUp(username: string, email: string, password: string):
       }
 
       localStorage.setItem('workus_user', JSON.stringify(authUser))
+      // Synchroniser avec la liste publique
+      syncUserToPublicList(authUser)
       return { success: true, user: authUser }
     } catch (error) {
       return { success: false, error: 'Erreur lors de l\'inscription' }
@@ -366,6 +412,8 @@ export async function signUp(username: string, email: string, password: string):
       await loadUserData(data.user.id)
       
       localStorage.setItem('workus_user', JSON.stringify(authUser))
+      // Synchroniser avec la liste publique
+      syncUserToPublicList(authUser)
       
       return { success: true, user: authUser }
     }
@@ -491,6 +539,8 @@ export function onAuthStateChange(callback: (user: AuthUser | null) => void): ()
       await loadUserData(session.user.id)
       
       localStorage.setItem('workus_user', JSON.stringify(authUser))
+      // Synchroniser avec la liste publique
+      syncUserToPublicList(authUser)
       callback(authUser)
     } else if (event === 'SIGNED_OUT') {
       localStorage.removeItem('workus_user')

@@ -10,6 +10,8 @@ import { LevelIndicator, StatCard, CVBuilder } from '../components/ui'
 import { useAuth } from '../contexts/AuthContext'
 import { useUserData } from '../contexts/UserDataContext'
 import { useMessages } from '../contexts/MessagesContext'
+import { userService } from '../db'
+import { useUserPresence } from '../hooks/usePresence'
 
 const PROFILE_STORAGE_KEY = 'workus_profile_data'
 
@@ -56,6 +58,10 @@ export function ProfilePage() {
   
   // Déterminer si c'est notre propre profil ou celui d'un autre utilisateur
   const isOwnProfile = !userId || userId === user?.id
+  
+  // Statut de présence (en ligne / hors ligne)
+  const targetUserId = isOwnProfile ? user?.id : userId
+  const { isOnline, formatLastSeen } = useUserPresence(targetUserId)
   
   // Stats utilisateur depuis le contexte ou valeurs par défaut
   const userStats = defaultUserStats
@@ -113,20 +119,70 @@ export function ProfilePage() {
 
   // Charger les données de l'utilisateur consulté
   useEffect(() => {
-    if (userId && userId !== user?.id) {
-      // Chercher dans la liste des utilisateurs publics
+    const loadViewedUser = async () => {
+      if (!userId || userId === user?.id) return
+      
+      // Chercher dans la liste des utilisateurs publics (localStorage)
       const publicUser = getUserById(userId)
       
       // Charger les données de profil depuis localStorage
       const profileData = loadUserProfileData(userId)
       const cvData = localStorage.getItem(`workus_cv_${userId}`)
       
+      // Chercher aussi les données d'authentification (pour le username)
+      let storedUsername = publicUser?.username
+      let storedRole = publicUser?.role
+      let storedAvatar = publicUser?.avatar
+      let storedJoinedAt = publicUser?.joinedAt
+      let storedBio = publicUser?.bio
+      
+      // 1. PRIORITÉ : Chercher dans IndexedDB (base de données principale)
+      try {
+        const dbUser = await userService.getById(userId)
+        if (dbUser) {
+          storedUsername = dbUser.username
+          storedRole = dbUser.role as any
+          storedAvatar = dbUser.avatar || storedAvatar
+          storedJoinedAt = dbUser.joinedAt || storedJoinedAt
+          storedBio = dbUser.bio || storedBio
+        }
+      } catch (error) {
+        console.log('Utilisateur non trouvé dans IndexedDB, recherche dans localStorage...')
+      }
+      
+      // 2. Fallback : Chercher dans localStorage
+      try {
+        const authData = localStorage.getItem('workus_auth_session')
+        if (authData && !storedUsername) {
+          const parsed = JSON.parse(authData)
+          if (parsed.userId === userId && parsed.username) {
+            storedUsername = storedUsername || parsed.username
+            storedRole = storedRole || parsed.role
+          }
+        }
+        
+        // Chercher dans tous les utilisateurs stockés
+        const allUsers = localStorage.getItem('workus_public_users')
+        if (allUsers && !storedUsername) {
+          const users = JSON.parse(allUsers)
+          const foundUser = users.find((u: any) => u.id === userId)
+          if (foundUser) {
+            storedUsername = storedUsername || foundUser.username
+            storedRole = storedRole || foundUser.role
+            storedAvatar = storedAvatar || foundUser.avatar
+            storedJoinedAt = storedJoinedAt || foundUser.joinedAt
+          }
+        }
+      } catch {
+        // Ignorer les erreurs de parsing
+      }
+      
       setViewedUser({
-        username: publicUser?.username || 'Utilisateur',
+        username: storedUsername || profileData?.username || 'Utilisateur inconnu',
         email: '', // Ne pas afficher l'email des autres utilisateurs
-        bio: profileData?.bio || publicUser?.bio || 'Aucune bio disponible',
-        avatar: publicUser?.avatar,
-        joinedAt: publicUser?.joinedAt || new Date().toISOString(),
+        bio: profileData?.bio || storedBio || 'Aucune bio disponible',
+        avatar: storedAvatar || profileData?.avatar,
+        joinedAt: storedJoinedAt || new Date().toISOString(),
         location: profileData?.location || publicUser?.location,
         website: profileData?.website,
         github: profileData?.github,
@@ -136,9 +192,11 @@ export function ProfilePage() {
         following: 0,
         skills: [],
         cvData: cvData ? JSON.parse(cvData) : null,
-        role: publicUser?.role
+        role: storedRole
       })
     }
+    
+    loadViewedUser()
   }, [userId, user?.id, getUserById])
 
   // Charger les données du profil depuis localStorage
@@ -443,6 +501,26 @@ export function ProfilePage() {
               })()}
             </div>
             <p className="text-dark-400">{displayUser.email}</p>
+          </div>
+        </div>
+
+        {/* Indicateur de présence - En ligne / Hors ligne */}
+        <div className="absolute top-4 left-4">
+          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-sm ${
+            isOnline 
+              ? 'bg-green-500/20 border border-green-500/30' 
+              : 'bg-dark-700/50 border border-dark-600/50'
+          }`}>
+            <span className={`w-2.5 h-2.5 rounded-full ${
+              isOnline 
+                ? 'bg-green-500 animate-pulse shadow-lg shadow-green-500/50' 
+                : 'bg-dark-500'
+            }`} />
+            <span className={`text-xs font-medium ${
+              isOnline ? 'text-green-400' : 'text-dark-400'
+            }`}>
+              {isOnline ? 'En ligne' : (formatLastSeen() || 'Hors ligne')}
+            </span>
           </div>
         </div>
 

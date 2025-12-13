@@ -1,6 +1,8 @@
 import { ReactNode, useState } from 'react'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
+import { useAuth } from '../../contexts/AuthContext'
+import { useCurrentUserPresence } from '../../hooks/usePresence'
 
 interface LayoutProps {
   children: ReactNode
@@ -11,8 +13,12 @@ interface LayoutProps {
  * Contient la sidebar fixe à gauche et la topbar en haut
  */
 export function Layout({ children }: LayoutProps) {
+  const { user } = useAuth()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  
+  // Activer le suivi de présence pour l'utilisateur connecté
+  useCurrentUserPresence(user?.id)
 
   return (
     <div className="min-h-screen bg-dark-950 bg-grid-pattern">

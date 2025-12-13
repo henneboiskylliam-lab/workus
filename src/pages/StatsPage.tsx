@@ -28,9 +28,35 @@ interface UserStatsData {
   sessionStartTime: number // timestamp du début de session
 }
 
-const STATS_STORAGE_KEY = 'workus_user_stats'
+// Clés de stockage - Ces données sont PERSISTANTES et ne seront JAMAIS effacées par les mises à jour
+const STATS_STORAGE_KEY = 'workus_user_stats_v2'
 const SESSION_KEY = 'workus_session_start'
 const SESSION_DATE_KEY = 'workus_session_date'
+
+// Migration depuis l'ancienne version si nécessaire
+const migrateOldStats = () => {
+  const oldKey = 'workus_user_stats'
+  const oldData = localStorage.getItem(oldKey)
+  const newData = localStorage.getItem(STATS_STORAGE_KEY)
+  
+  // Si on a des anciennes données mais pas de nouvelles, migrer
+  if (oldData && !newData) {
+    try {
+      const parsed = JSON.parse(oldData)
+      if (parsed && parsed.stats) {
+        localStorage.setItem(STATS_STORAGE_KEY, oldData)
+        console.log('Migration des statistiques réussie')
+      }
+    } catch {
+      // Ignorer les erreurs de parsing
+    }
+  }
+}
+
+// Exécuter la migration au chargement
+if (typeof window !== 'undefined') {
+  migrateOldStats()
+}
 
 // Fonction pour obtenir la date d'aujourd'hui au format YYYY-MM-DD
 const getTodayDate = (): string => {
@@ -82,6 +108,40 @@ const getDefaultStats = (createdAt?: string): UserStatsData => {
   }
 }
 
+// Charger les stats depuis localStorage (fonction statique pour l'initialisation)
+const loadStatsFromStorage = (userCreatedAt?: string): UserStatsData => {
+  const today = getTodayDate()
+  
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(STATS_STORAGE_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (parsed && parsed.stats) {
+          // S'assurer que dailyTimeRecords est un tableau valide
+          const dailyTimeRecords = Array.isArray(parsed.stats.dailyTimeRecords) 
+            ? parsed.stats.dailyTimeRecords 
+            : [{ date: today, minutes: 0 }]
+          
+          // Récupérer la date de création du compte depuis les stats sauvegardées
+          const accountCreatedAt = parsed.stats.accountCreatedAt || userCreatedAt || new Date().toISOString()
+          
+          return {
+            ...getDefaultStats(accountCreatedAt),
+            ...parsed.stats,
+            accountCreatedAt, // Toujours préserver la date de création
+            dailyTimeRecords
+          }
+        }
+      }
+    } catch {
+      // Ignorer les erreurs de parsing
+    }
+  }
+  
+  return getDefaultStats(userCreatedAt)
+}
+
 /**
  * StatsPage - Statistiques détaillées de l'utilisateur
  * Avec suivi du temps réel et historique persistant
@@ -95,73 +155,43 @@ export function StatsPage() {
   const sessionStartRef = useRef<number>(Date.now())
   const lastSaveRef = useRef<number>(Date.now())
   const [isLoading, setIsLoading] = useState(true)
+  const isInitializedRef = useRef(false)
   
-  // Charger les stats depuis localStorage
-  const loadStats = useCallback((): UserStatsData => {
+  // Initialiser les stats depuis localStorage IMMÉDIATEMENT
+  const [userStats, setUserStats] = useState<UserStatsData>(() => {
+    const loaded = loadStatsFromStorage(user?.createdAt)
+    return loaded
+  })
+
+  // Gérer la session au montage
+  useEffect(() => {
+    if (isInitializedRef.current) return
+    isInitializedRef.current = true
+    
     const today = getTodayDate()
+    const storedSessionDate = localStorage.getItem(SESSION_DATE_KEY)
+    const storedSessionStart = localStorage.getItem(SESSION_KEY)
     
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(STATS_STORAGE_KEY)
-        if (stored) {
-          const parsed = JSON.parse(stored)
-          // Charger les stats (on vérifie l'userId après)
-          if (parsed && parsed.stats) {
-            // Gérer la session - vérifier si c'est une nouvelle session (nouveau jour ou première visite)
-            const storedSessionDate = localStorage.getItem(SESSION_DATE_KEY)
-            const storedSessionStart = localStorage.getItem(SESSION_KEY)
-            
-            let startTime: number
-            
-            if (storedSessionDate === today && storedSessionStart) {
-              // Même jour, continuer la session existante
-              startTime = parseInt(storedSessionStart) || Date.now()
-            } else {
-              // Nouveau jour ou première session
-              startTime = Date.now()
-              localStorage.setItem(SESSION_KEY, startTime.toString())
-              localStorage.setItem(SESSION_DATE_KEY, today)
-            }
-            
-            sessionStartRef.current = startTime
-            
-            // S'assurer que dailyTimeRecords est un tableau valide
-            const dailyTimeRecords = Array.isArray(parsed.stats.dailyTimeRecords) 
-              ? parsed.stats.dailyTimeRecords 
-              : [{ date: today, minutes: 0 }]
-            
-            return {
-              ...getDefaultStats(user?.createdAt),
-              ...parsed.stats,
-              dailyTimeRecords,
-              sessionStartTime: startTime
-            }
-          }
-        }
-      } catch {
-        // Ignorer les erreurs de parsing et retourner les valeurs par défaut
-      }
-    }
+    let startTime: number
     
-    // Initialiser les stats pour un nouvel utilisateur
-    const newSessionStart = Date.now()
-    sessionStartRef.current = newSessionStart
-    
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(SESSION_KEY, newSessionStart.toString())
+    if (storedSessionDate === today && storedSessionStart) {
+      // Même jour, continuer la session existante
+      startTime = parseInt(storedSessionStart) || Date.now()
+    } else {
+      // Nouveau jour ou première session
+      startTime = Date.now()
+      localStorage.setItem(SESSION_KEY, startTime.toString())
       localStorage.setItem(SESSION_DATE_KEY, today)
     }
     
-    return getDefaultStats(user?.createdAt)
-  }, [user?.createdAt])
-
-  const [userStats, setUserStats] = useState<UserStatsData>(() => getDefaultStats(user?.createdAt))
-  
-  // Charger les stats au montage et quand l'utilisateur change
-  useEffect(() => {
-    setUserStats(loadStats())
+    sessionStartRef.current = startTime
+    lastSaveRef.current = Date.now()
+    
+    // Charger les stats depuis localStorage
+    const loaded = loadStatsFromStorage(user?.createdAt)
+    setUserStats(loaded)
     setIsLoading(false)
-  }, [user?.id, loadStats])
+  }, [user?.createdAt])
 
   // Sauvegarder le temps passé
   const saveTimeSpent = useCallback(() => {
@@ -249,25 +279,37 @@ export function StatsPage() {
     }
   }, [saveTimeSpent])
 
-  // Sauvegarder les stats dans localStorage
+  // Sauvegarder les stats dans localStorage - seulement quand les données sont initialisées
   useEffect(() => {
-    // Toujours sauvegarder, même sans utilisateur connecté
+    // Ne pas sauvegarder si on est en chargement ou si les données ne sont pas initialisées
+    if (isLoading || !isInitializedRef.current) return
+    
+    // Vérifier que les données sont valides avant de sauvegarder
+    if (!userStats || !userStats.accountCreatedAt) return
+    
     localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
       userId: user?.id || 'anonymous',
       stats: userStats,
       lastSaved: Date.now()
     }))
-  }, [userStats, user])
+  }, [userStats, user, isLoading])
 
-  // Mettre à jour les compétences depuis UserData
+  // Mettre à jour les compétences depuis UserData - seulement après initialisation
   useEffect(() => {
+    if (!isInitializedRef.current || isLoading) return
+    
     const skillProgress = data?.skillProgress || {}
     const skillsCount = Object.keys(skillProgress).length
-    setUserStats(prev => ({
-      ...prev,
-      skillsWorkedOn: skillsCount
-    }))
-  }, [data])
+    
+    // Ne mettre à jour que si c'est différent pour éviter les boucles
+    setUserStats(prev => {
+      if (prev.skillsWorkedOn === skillsCount) return prev
+      return {
+        ...prev,
+        skillsWorkedOn: skillsCount
+      }
+    })
+  }, [data, isLoading])
 
   // Obtenir les skills de l'utilisateur avec leur progression (avec protection)
   const skillProgress = data?.skillProgress || {}
