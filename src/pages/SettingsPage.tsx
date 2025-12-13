@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
@@ -7,6 +7,8 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
+import { supabase, checkSupabase } from '../lib/supabase'
+import { userService } from '../db'
 
 type SettingsSection = 'profile' | 'notifications' | 'appearance' | 'privacy' | 'billing' | 'security'
 
@@ -53,7 +55,7 @@ const initialPrivacy: PrivacySetting[] = [
  */
 export function SettingsPage() {
   const navigate = useNavigate()
-  const { user, logout, isAuthenticated } = useAuth()
+  const { user, logout, isAuthenticated, updateProfile } = useAuth()
   const { theme, setTheme, effectiveTheme } = useTheme()
   
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile')
@@ -62,8 +64,17 @@ export function SettingsPage() {
   // Profile state
   const [username, setUsername] = useState(user?.username || 'utilisateur')
   const [email, setEmail] = useState(user?.email || 'email@example.com')
-  const [bio, setBio] = useState('Développeur passionné | En route vers le full-stack')
+  const [bio, setBio] = useState(user?.bio || '')
   const [isSaving, setIsSaving] = useState(false)
+  
+  // Mettre à jour les champs quand l'utilisateur change
+  useEffect(() => {
+    if (user) {
+      setUsername(user.username || 'utilisateur')
+      setEmail(user.email || 'email@example.com')
+      setBio(user.bio || '')
+    }
+  }, [user])
   
   // Notifications & Privacy state
   const [notifications, setNotifications] = useState<NotificationSetting[]>(initialNotifications)
@@ -89,15 +100,99 @@ export function SettingsPage() {
 
   // Sauvegarder le profil
   const handleSaveProfile = async () => {
-    if (!username.trim() || !email.trim()) {
-      showNotification('Veuillez remplir tous les champs', 'error')
+    if (!username.trim()) {
+      showNotification('Le nom d\'utilisateur est requis', 'error')
+      return
+    }
+    
+    if (!user?.id) {
+      showNotification('Vous devez être connecté', 'error')
       return
     }
     
     setIsSaving(true)
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    setIsSaving(false)
-    showNotification('Profil mis à jour avec succès')
+    
+    try {
+      // 1. Mettre à jour dans Supabase si configuré
+      if (checkSupabase() && supabase) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ 
+            username: username.trim(),
+            bio: bio.trim(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', user.id)
+        
+        if (error) {
+          console.error('Erreur Supabase:', error)
+          // Continuer avec la sauvegarde locale
+        }
+      }
+      
+      // 2. Mettre à jour dans IndexedDB (local)
+      try {
+        await userService.update(user.id, { 
+          username: username.trim(),
+          bio: bio.trim()
+        })
+      } catch (err) {
+        console.log('Sauvegarde IndexedDB non disponible')
+      }
+      
+      // 3. Mettre à jour le localStorage (session utilisateur)
+      const storedUser = localStorage.getItem('workus_user')
+      if (storedUser) {
+        const userData = JSON.parse(storedUser)
+        userData.username = username.trim()
+        userData.bio = bio.trim()
+        localStorage.setItem('workus_user', JSON.stringify(userData))
+      }
+      
+      // 4. Mettre à jour la liste publique
+      try {
+        const publicUsers = localStorage.getItem('workus_public_users')
+        if (publicUsers) {
+          const users = JSON.parse(publicUsers)
+          const updatedUsers = users.map((u: any) => {
+            if (u.id === user.id) {
+              return { ...u, username: username.trim(), bio: bio.trim() }
+            }
+            return u
+          })
+          localStorage.setItem('workus_public_users', JSON.stringify(updatedUsers))
+        }
+      } catch {
+        // Ignorer
+      }
+      
+      // 5. Mettre à jour les utilisateurs enregistrés
+      try {
+        const registeredUsers = localStorage.getItem('workus_registered_users')
+        if (registeredUsers) {
+          const users = JSON.parse(registeredUsers)
+          const updatedUsers = users.map((u: any) => {
+            if (u.id === user.id || u.email === user.email) {
+              return { ...u, username: username.trim() }
+            }
+            return u
+          })
+          localStorage.setItem('workus_registered_users', JSON.stringify(updatedUsers))
+        }
+      } catch {
+        // Ignorer
+      }
+      
+      // 6. Mettre à jour le contexte en temps réel
+      updateProfile({ username: username.trim(), bio: bio.trim() })
+      
+      showNotification('Profil mis à jour avec succès !')
+    } catch (error) {
+      console.error('Erreur lors de la sauvegarde:', error)
+      showNotification('Erreur lors de la sauvegarde', 'error')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   // Toggle notification

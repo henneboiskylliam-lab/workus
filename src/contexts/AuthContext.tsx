@@ -24,6 +24,7 @@ interface AuthContextType {
   isCreator: () => boolean
   isModerator: () => boolean
   refreshUserData: () => Promise<void>
+  updateProfile: (updates: Partial<Pick<AuthUser, 'username' | 'bio' | 'avatar'>>) => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -149,6 +150,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }
 
+  // Mettre à jour le profil utilisateur en temps réel
+  const updateProfile = (updates: Partial<Pick<AuthUser, 'username' | 'bio' | 'avatar'>>) => {
+    if (user) {
+      setUser({ ...user, ...updates })
+    }
+  }
+
   // Effacer les erreurs
   const clearError = () => setError(null)
 
@@ -178,6 +186,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isCreator,
     isModerator,
     refreshUserData,
+    updateProfile,
   }
 
   return (

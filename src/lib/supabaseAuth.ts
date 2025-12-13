@@ -269,51 +269,56 @@ async function syncToLocalDB(userId: string, data: any) {
 }
 
 /**
+ * Connexion locale avec IndexedDB
+ */
+async function signInLocal(email: string, password: string): Promise<AuthResult> {
+  try {
+    const user = await userService.authenticate(email, password)
+    if (user) {
+      // Récupérer le rôle depuis localStorage (priorité aux modifications admin)
+      const finalRole = getRoleFromStorage(user.id, user.email, user.role as UserRole)
+      
+      const authUser: AuthUser = {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: finalRole,
+        isActive: user.isActive,
+        isVerified: user.isVerified,
+        createdAt: user.joinedAt,
+        lastLoginAt: new Date().toISOString(),
+        avatar: user.avatar || undefined,
+        bio: user.bio
+      }
+      localStorage.setItem('workus_user', JSON.stringify(authUser))
+      syncUserToPublicList(authUser)
+      return { success: true, user: authUser }
+    }
+    return { success: false, error: 'Email ou mot de passe incorrect' }
+  } catch (error) {
+    return { success: false, error: 'Erreur de connexion locale' }
+  }
+}
+
+/**
  * Connexion avec email et mot de passe
+ * Essaie d'abord Supabase, puis fallback sur local si nécessaire
  */
 export async function signIn(email: string, password: string): Promise<AuthResult> {
+  // Si Supabase n'est pas configuré, utiliser uniquement le mode local
   if (!checkSupabase() || !supabase) {
-    // Mode local - utiliser IndexedDB
-    try {
-      const user = await userService.authenticate(email, password)
-      if (user) {
-        // Récupérer le rôle depuis localStorage (priorité aux modifications admin)
-        const finalRole = getRoleFromStorage(user.id, user.email, user.role as UserRole)
-        
-        const authUser: AuthUser = {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          role: finalRole, // Utiliser le rôle de localStorage si modifié
-          isActive: user.isActive,
-          isVerified: user.isVerified,
-          createdAt: user.joinedAt,
-          lastLoginAt: new Date().toISOString(),
-          avatar: user.avatar || undefined,
-          bio: user.bio
-        }
-        localStorage.setItem('workus_user', JSON.stringify(authUser))
-        // Synchroniser avec la liste publique
-        syncUserToPublicList(authUser)
-        return { success: true, user: authUser }
-      }
-      return { success: false, error: 'Email ou mot de passe incorrect' }
-    } catch (error) {
-      return { success: false, error: 'Erreur de connexion' }
-    }
+    return signInLocal(email, password)
   }
 
+  // Essayer d'abord avec Supabase
   try {
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password
     })
 
-    if (error) {
-      return { success: false, error: error.message }
-    }
-
-    if (data.user) {
+    // Si Supabase réussit
+    if (!error && data.user) {
       // Charger le profil
       const { data: profile } = await supabase
         .from('profiles')
@@ -334,10 +339,21 @@ export async function signIn(email: string, password: string): Promise<AuthResul
       return { success: true, user: authUser }
     }
 
-    return { success: false, error: 'Connexion échouée' }
+    // Si Supabase échoue, essayer en local (comptes créés avant Supabase)
+    console.log('Supabase auth failed, trying local auth...')
+    const localResult = await signInLocal(email, password)
+    if (localResult.success) {
+      return localResult
+    }
+
+    // Retourner l'erreur Supabase originale si les deux échouent
+    return { success: false, error: error?.message || 'Email ou mot de passe incorrect' }
   } catch (error) {
-    console.error('Erreur de connexion:', error)
-    return { success: false, error: 'Erreur de connexion' }
+    console.error('Erreur de connexion Supabase:', error)
+    
+    // Fallback sur la connexion locale
+    console.log('Trying local auth as fallback...')
+    return signInLocal(email, password)
   }
 }
 
