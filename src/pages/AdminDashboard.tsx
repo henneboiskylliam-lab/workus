@@ -138,7 +138,6 @@ export function AdminDashboard() {
       const supabaseUsers = await loadUsersFromSupabase()
       
       // 2. Récupérer les OVERRIDES de rôles (modifications admin locales - PRIORITÉ MAXIMALE)
-      // Nouvelle clé v2 pour éviter les conflits
       const OVERRIDE_KEY = 'workus_role_overrides_v2'
       let roleOverrides: Record<string, string> = {}
       try {
@@ -148,7 +147,6 @@ export function AdminDashboard() {
           roleOverrides = JSON.parse(overrides)
           console.log('Overrides de rôles chargés (v2):', JSON.stringify(roleOverrides))
         } else {
-          // Essayer de migrer depuis l'ancienne clé
           const oldOverrides = localStorage.getItem('workus_admin_role_overrides')
           if (oldOverrides) {
             roleOverrides = JSON.parse(oldOverrides)
@@ -160,14 +158,33 @@ export function AdminDashboard() {
         console.error('Erreur lecture overrides:', err)
       }
 
+      // 2b. Récupérer les OVERRIDES COMPLETS (username, isActive, isVerified, role)
+      const USER_OVERRIDES_KEY = 'workus_user_overrides_v2'
+      let userOverrides: Record<string, { username?: string; role?: string; isActive?: boolean; isVerified?: boolean }> = {}
+      try {
+        const fullOverrides = localStorage.getItem(USER_OVERRIDES_KEY)
+        if (fullOverrides) {
+          userOverrides = JSON.parse(fullOverrides)
+          console.log('Overrides complets chargés:', JSON.stringify(userOverrides))
+        }
+      } catch (err) {
+        console.error('Erreur lecture overrides complets:', err)
+      }
+
       // Fonction helper pour obtenir le rôle override (cherche par email normalisé puis par ID)
       const getOverriddenRole = (id: string, email: string): string | undefined => {
         const emailKey = email?.toLowerCase()?.trim()
         const result = roleOverrides[emailKey] || roleOverrides[id] || roleOverrides[email]
         if (result) {
-          console.log(`Override trouvé pour ${email}: ${result}`)
+          console.log(`Override de rôle trouvé pour ${email}: ${result}`)
         }
         return result
+      }
+
+      // Fonction helper pour obtenir les overrides complets
+      const getFullOverrides = (id: string, email: string) => {
+        const emailKey = email?.toLowerCase()?.trim()
+        return userOverrides[emailKey] || userOverrides[id] || null
       }
       
       // 3. Récupérer les rôles depuis localStorage (pour les utilisateurs locaux)
@@ -199,42 +216,49 @@ export function AdminDashboard() {
         // Ignorer
       }
 
-      // 4. Convertir les utilisateurs IndexedDB
+      // 4. Convertir les utilisateurs IndexedDB avec overrides complets
       const localUsers: DisplayUser[] = Array.isArray(dbUsers) ? dbUsers.map(u => {
-        // Priorité: 1. Override admin (par ID ou email), 2. localStorage, 3. IndexedDB
+        // Priorité: 1. Override complet, 2. Override rôle seul, 3. localStorage, 4. IndexedDB
+        const fullOverride = getFullOverrides(u.id, u.email)
         const overrideRole = getOverriddenRole(u.id, u.email)
-        const finalRole = (overrideRole || localStorageRoles[u.id] || localStorageRoles[u.email] || u.role) as DisplayUser['role']
+        const finalRole = (fullOverride?.role || overrideRole || localStorageRoles[u.id] || localStorageRoles[u.email] || u.role) as DisplayUser['role']
         
         return {
           id: u.id,
-          username: u.username,
+          username: fullOverride?.username ?? u.username,
           email: u.email,
           role: finalRole,
-          isActive: u.isActive,
-          isVerified: u.isVerified,
+          isActive: fullOverride?.isActive ?? u.isActive,
+          isVerified: fullOverride?.isVerified ?? u.isVerified,
           joinedAt: u.joinedAt,
           avatar: u.avatar
         }
       }) : []
 
-      // 5. Fusionner les utilisateurs (Supabase + overrides, éviter les doublons)
+      // 5. Fusionner les utilisateurs (Supabase + overrides complets, éviter les doublons)
       const allUserIds = new Set<string>()
       const allEmails = new Set<string>()
       const mergedUsers: DisplayUser[] = []
 
-      // D'abord les utilisateurs Supabase, mais avec override de rôle si présent
+      // D'abord les utilisateurs Supabase, mais avec overrides complets si présents
       for (const user of supabaseUsers) {
         if (!allUserIds.has(user.id) && !allEmails.has(user.email)) {
           allUserIds.add(user.id)
           allEmails.add(user.email)
-          // Appliquer l'override de rôle si existant (cherche par ID puis par email)
+          // Appliquer les overrides complets (cherche par ID puis par email)
+          const fullOverride = getFullOverrides(user.id, user.email)
           const overriddenRole = getOverriddenRole(user.id, user.email)
-          if (overriddenRole) {
-            console.log(`Override appliqué pour ${user.username} (${user.email}): ${user.role} -> ${overriddenRole}`)
+          const finalRole = (fullOverride?.role || overriddenRole || user.role) as DisplayUser['role']
+          
+          if (fullOverride || overriddenRole) {
+            console.log(`Override appliqué pour ${user.username} (${user.email}):`, fullOverride || { role: overriddenRole })
           }
           mergedUsers.push({
             ...user,
-            role: (overriddenRole || user.role) as DisplayUser['role']
+            username: fullOverride?.username ?? user.username,
+            role: finalRole,
+            isActive: fullOverride?.isActive ?? user.isActive,
+            isVerified: fullOverride?.isVerified ?? user.isVerified
           })
         }
       }
@@ -367,17 +391,47 @@ export function AdminDashboard() {
       }
     }
 
-    // ÉTAPE 3: Mettre à jour dans workus_public_users
+    // ÉTAPE 3: Mettre à jour dans workus_public_users (TOUTES les modifications)
     try {
       const publicUsers = localStorage.getItem('workus_public_users')
       if (publicUsers) {
         const users = JSON.parse(publicUsers)
         const updatedUsers = users.map((u: any) => 
-          u.id === editingUser.id ? { ...u, role: editForm.role } : u
+          u.id === editingUser.id ? { 
+            ...u, 
+            username: editForm.username,
+            role: editForm.role,
+            isActive: editForm.isActive,
+            isVerified: editForm.isVerified
+          } : u
         )
         localStorage.setItem('workus_public_users', JSON.stringify(updatedUsers))
       }
     } catch { /* ignorer */ }
+
+    // ÉTAPE 3b: Sauvegarder TOUTES les modifications dans un override complet
+    const USER_OVERRIDES_KEY = 'workus_user_overrides_v2'
+    try {
+      const existingUserOverrides = localStorage.getItem(USER_OVERRIDES_KEY)
+      const userOverrides: Record<string, any> = existingUserOverrides ? JSON.parse(existingUserOverrides) : {}
+      
+      const emailKey = editingUser.email.toLowerCase().trim()
+      const overrideData = {
+        username: editForm.username,
+        role: editForm.role,
+        isActive: editForm.isActive,
+        isVerified: editForm.isVerified,
+        updatedAt: new Date().toISOString()
+      }
+      
+      userOverrides[emailKey] = overrideData
+      userOverrides[editingUser.id] = overrideData
+      
+      localStorage.setItem(USER_OVERRIDES_KEY, JSON.stringify(userOverrides))
+      console.log('✅ Override complet sauvegardé:', emailKey, overrideData)
+    } catch (err) {
+      console.error('Erreur sauvegarde override complet:', err)
+    }
 
     // ÉTAPE 4: Mettre à jour dans IndexedDB
     try {
