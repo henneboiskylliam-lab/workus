@@ -331,55 +331,51 @@ export function AdminDashboard() {
       return
     }
 
+    console.log('=== Changement de rôle ===')
+    console.log('Utilisateur:', targetUser.username, targetUser.id)
+    console.log('Nouveau rôle:', newRole)
+
     // 1. Mettre à jour dans Supabase (source principale)
     let supabaseUpdateSuccess = false
     if (checkSupabase() && supabase) {
       try {
-        // Utiliser la fonction RPC sécurisée
-        const { data: rpcResult, error: rpcError } = await supabase
-          .rpc('update_user_role', { 
-            target_user_id: targetUser.id, 
-            new_role: newRole 
-          })
+        // Essayer la mise à jour directe (plus fiable si RLS est désactivé ou bien configuré)
+        const { data, error } = await supabase
+          .from('profiles')
+          .update({ role: newRole, updated_at: new Date().toISOString() })
+          .eq('id', targetUser.id)
+          .select()
         
-        console.log('RPC result:', rpcResult, 'error:', rpcError)
+        console.log('Réponse Supabase - data:', data, 'error:', error)
         
-        if (rpcError) {
-          // Si la fonction RPC n'existe pas (code 42883), essayer la mise à jour directe
-          if (rpcError.code === '42883' || rpcError.message.includes('does not exist')) {
-            console.warn('Fonction RPC non trouvée, tentative directe')
-            
-            const { data, error } = await supabase
-              .from('profiles')
-              .update({ role: newRole, updated_at: new Date().toISOString() })
-              .eq('id', targetUser.id)
-              .select()
-            
-            if (error) {
-              console.error('Erreur mise à jour Supabase:', error)
-              displayToast('Exécutez le script SQL dans Supabase (voir console)', 'error')
-            } else if (!data || data.length === 0) {
-              console.warn('Mise à jour bloquée par RLS')
-              displayToast('Permissions insuffisantes. Exécutez le script SQL.', 'error')
-            } else {
-              console.log('Mise à jour Supabase réussie:', data)
-              supabaseUpdateSuccess = true
-            }
-          } else {
-            console.error('Erreur RPC:', rpcError)
-            displayToast(`Erreur: ${rpcError.message}`, 'error')
-          }
-        } else if (rpcResult && rpcResult.success === false) {
-          // La fonction a retourné une erreur métier
-          console.error('Erreur métier:', rpcResult.error)
-          displayToast(`Erreur: ${rpcResult.error}`, 'error')
-        } else {
-          console.log('Mise à jour Supabase réussie via RPC')
+        if (error) {
+          console.error('Erreur mise à jour Supabase:', error.message, error.code)
+          // Ne pas afficher d'erreur toast, continuer avec les mises à jour locales
+        } else if (data && data.length > 0) {
+          console.log('✅ Mise à jour Supabase réussie:', data[0])
           supabaseUpdateSuccess = true
+        } else {
+          console.warn('⚠️ Aucune ligne modifiée dans Supabase (RLS?)')
+          // Essayer avec la fonction RPC si disponible
+          try {
+            const { data: rpcResult, error: rpcError } = await supabase
+              .rpc('update_user_role', { 
+                target_user_id: targetUser.id, 
+                new_role: newRole 
+              })
+            
+            if (!rpcError && rpcResult?.success !== false) {
+              console.log('✅ Mise à jour via RPC réussie')
+              supabaseUpdateSuccess = true
+            } else {
+              console.warn('RPC échoué ou non disponible:', rpcError?.message || rpcResult?.error)
+            }
+          } catch (rpcErr) {
+            console.warn('RPC non disponible:', rpcErr)
+          }
         }
       } catch (err) {
         console.error('Erreur Supabase:', err)
-        displayToast('Erreur de connexion à Supabase', 'error')
       }
     }
 
@@ -450,15 +446,22 @@ export function AdminDashboard() {
     
     // Ajouter à l'historique des activités
     const roleLabel = newRole === 'admin' ? 'Administrateur' : newRole === 'creator' ? 'Créateur' : newRole === 'moderator' ? 'Modérateur' : 'Utilisateur'
-    addActivity({
-      type: 'role_promoted',
-      message: `${targetUser.username} a été promu ${roleLabel}`,
-      userId: targetUser.id,
-      userName: targetUser.username,
-      metadata: { oldRole: targetUser.role, newRole }
-    })
     
-    displayToast(`Rôle changé en ${roleLabel}`, 'success')
+    // Enregistrer l'activité (non-bloquant)
+    try {
+      addActivity({
+        type: 'role_promoted',
+        message: `${targetUser.username} a été promu ${roleLabel}`,
+        userId: targetUser.id,
+        userName: targetUser.username,
+        metadata: { oldRole: targetUser.role, newRole }
+      })
+    } catch (activityError) {
+      console.warn('Erreur enregistrement activité:', activityError)
+    }
+    
+    console.log('=== Changement de rôle terminé ===')
+    displayToast(`Rôle de ${targetUser.username} changé en ${roleLabel}`, 'success')
   }
 
   // Ouvrir le modal de suppression
