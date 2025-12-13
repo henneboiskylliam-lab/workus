@@ -10,7 +10,9 @@ import { AdminStatsProvider } from './contexts/AdminStatsContext'
 import { ActivityProvider } from './contexts/ActivityContext'
 import { HelpCenterProvider } from './contexts/HelpCenterContext'
 import { MessagesProvider } from './contexts/MessagesContext'
+import { SiteSettingsProvider } from './contexts/SiteSettingsContext'
 import { Layout } from './components/layout/Layout'
+import { MaintenanceGuard } from './components/MaintenanceGuard'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
 import { DatabaseProvider } from './db'
 
@@ -56,27 +58,31 @@ import { HelpCenterPage } from './pages/HelpCenterPage'
 function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AdminStatsProvider>
-          <ActivityProvider>
-            <HelpCenterProvider>
-              <UserDataProvider>
-                <ContentManagementProvider>
-                  <PostsProvider>
-                    <ReportsProvider>
-                      <NotificationsProvider>
-                        <MessagesProvider>
-                          {children}
-                        </MessagesProvider>
-                      </NotificationsProvider>
-                    </ReportsProvider>
-                  </PostsProvider>
-                </ContentManagementProvider>
-              </UserDataProvider>
-            </HelpCenterProvider>
-          </ActivityProvider>
-        </AdminStatsProvider>
-      </AuthProvider>
+      <SiteSettingsProvider>
+        <AuthProvider>
+          <AdminStatsProvider>
+            <ActivityProvider>
+              <HelpCenterProvider>
+                <UserDataProvider>
+                  <ContentManagementProvider>
+                    <PostsProvider>
+                      <ReportsProvider>
+                        <NotificationsProvider>
+                          <MessagesProvider>
+                            <MaintenanceGuard>
+                              {children}
+                            </MaintenanceGuard>
+                          </MessagesProvider>
+                        </NotificationsProvider>
+                      </ReportsProvider>
+                    </PostsProvider>
+                  </ContentManagementProvider>
+                </UserDataProvider>
+              </HelpCenterProvider>
+            </ActivityProvider>
+          </AdminStatsProvider>
+        </AuthProvider>
+      </SiteSettingsProvider>
     </ThemeProvider>
   )
 }

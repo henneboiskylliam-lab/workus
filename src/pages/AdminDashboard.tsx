@@ -14,6 +14,7 @@ import { usePosts } from '../contexts/PostsContext'
 import { useReports } from '../contexts/ReportsContext'
 import { useAdminStats } from '../contexts/AdminStatsContext'
 import { useActivity } from '../contexts/ActivityContext'
+import { useSiteSettings } from '../contexts/SiteSettingsContext'
 import { useUsers, userService } from '../db'
 import { supabase, checkSupabase } from '../lib/supabase'
 
@@ -88,6 +89,7 @@ export function AdminDashboard() {
   const { reports: contextReports, getPendingCount } = useReports()
   const { stats: adminStats, getStatsForPeriod, getUserEvolution, recordDailySnapshot } = useAdminStats()
   const { activities, getRecentActivities, getActivityTimeStats, recordGlobalActivity, userActivities, addActivity } = useActivity()
+  const { settings: siteSettings, updateSetting } = useSiteSettings()
   
   // Utilisateurs depuis IndexedDB
   const { users: dbUsers } = useUsers()
@@ -788,19 +790,6 @@ export function AdminDashboard() {
     displayToast(newStatus ? 'Compte activé' : 'Compte désactivé', 'success')
   }
   
-  // Données admin (seront chargées depuis IndexedDB dans une future version)
-  const siteSettings = {
-    siteName: 'Work Us',
-    siteDescription: 'Plateforme d\'apprentissage et de mise en relation professionnelle',
-    maintenanceMode: false,
-    registrationEnabled: true,
-    contentModerationEnabled: true,
-    maxUploadSize: 104857600,
-    allowedFileTypes: ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/webm', 'application/pdf'],
-    defaultUserRole: 'user',
-    emailNotificationsEnabled: true
-  }
-
   // Statistiques dynamiques basées sur les données réelles
   const totalUsers = allUsers.length
   const totalCreators = allUsers.filter(u => u.role === 'creator' || u.role === 'admin').length
@@ -1818,10 +1807,10 @@ export function AdminDashboard() {
 
             <div className="space-y-4">
               {[
-                { id: 'maintenance', label: 'Mode maintenance', desc: 'Désactive temporairement le site', value: siteSettings.maintenanceMode },
-                { id: 'registration', label: 'Inscriptions ouvertes', desc: 'Autoriser les nouvelles inscriptions', value: siteSettings.registrationEnabled },
-                { id: 'moderation', label: 'Modération du contenu', desc: 'Valider le contenu avant publication', value: siteSettings.contentModerationEnabled },
-                { id: 'emails', label: 'Notifications email', desc: 'Envoyer des emails aux utilisateurs', value: siteSettings.emailNotificationsEnabled },
+                { id: 'maintenanceMode', label: 'Mode maintenance', desc: 'Désactive temporairement le site (seuls les admins peuvent accéder)', value: siteSettings.maintenanceMode, key: 'maintenanceMode' as const },
+                { id: 'registrationEnabled', label: 'Inscriptions ouvertes', desc: 'Autoriser les nouvelles inscriptions', value: siteSettings.registrationEnabled, key: 'registrationEnabled' as const },
+                { id: 'contentModerationEnabled', label: 'Modération du contenu', desc: 'Valider le contenu avant publication', value: siteSettings.contentModerationEnabled, key: 'contentModerationEnabled' as const },
+                { id: 'emailNotificationsEnabled', label: 'Notifications email', desc: 'Envoyer des emails aux utilisateurs', value: siteSettings.emailNotificationsEnabled, key: 'emailNotificationsEnabled' as const },
               ].map(setting => (
                 <div key={setting.id} className="flex items-center justify-between py-3 border-b border-dark-700/50 last:border-0">
                   <div>
@@ -1829,6 +1818,15 @@ export function AdminDashboard() {
                     <p className="text-sm text-dark-400">{setting.desc}</p>
                   </div>
                   <button
+                    onClick={() => {
+                      updateSetting(setting.key, !setting.value)
+                      displayToast(
+                        setting.key === 'maintenanceMode' 
+                          ? (!setting.value ? 'Mode maintenance activé - Seuls les admins peuvent accéder au site' : 'Mode maintenance désactivé - Le site est accessible à tous')
+                          : `${setting.label} ${!setting.value ? 'activé' : 'désactivé'}`,
+                        'success'
+                      )
+                    }}
                     className={`w-12 h-7 rounded-full transition-colors ${
                       setting.value ? 'bg-primary-500' : 'bg-dark-600'
                     }`}
@@ -1841,9 +1839,16 @@ export function AdminDashboard() {
               ))}
             </div>
 
-            <button className="px-6 py-3 bg-gradient-to-r from-primary-500 to-secondary-500 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-primary-500/20 transition-all">
-              Sauvegarder les paramètres
-            </button>
+            {/* Message d'avertissement si maintenance activée */}
+            {siteSettings.maintenanceMode && (
+              <div className="p-4 bg-orange-500/10 border border-orange-500/30 rounded-xl flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-orange-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium text-orange-400">Mode maintenance actif</p>
+                  <p className="text-sm text-orange-300/70">Seuls les administrateurs peuvent actuellement accéder au site. Les autres utilisateurs voient une page de maintenance.</p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
