@@ -65,6 +65,23 @@ const formatTime = (minutes: number): string => {
   return `${hours}h ${mins}m`
 }
 
+// Valeurs par défaut pour éviter les crashes
+const getDefaultStats = (createdAt?: string): UserStatsData => {
+  const today = getTodayDate()
+  return {
+    totalHoursLearned: 0,
+    skillsWorkedOn: 0,
+    exercisesCompleted: 0,
+    achievementsUnlocked: 0,
+    currentStreak: 1,
+    longestStreak: 1,
+    accountCreatedAt: createdAt || new Date().toISOString(),
+    dailyTimeRecords: [{ date: today, minutes: 0 }],
+    lastActiveDate: today,
+    sessionStartTime: Date.now()
+  }
+}
+
 /**
  * StatsPage - Statistiques détaillées de l'utilisateur
  * Avec suivi du temps réel et historique persistant
@@ -77,18 +94,19 @@ export function StatsPage() {
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 })
   const sessionStartRef = useRef<number>(Date.now())
   const lastSaveRef = useRef<number>(Date.now())
+  const [isLoading, setIsLoading] = useState(true)
   
   // Charger les stats depuis localStorage
   const loadStats = useCallback((): UserStatsData => {
     const today = getTodayDate()
     
     if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(STATS_STORAGE_KEY)
-      if (stored) {
-        try {
+      try {
+        const stored = localStorage.getItem(STATS_STORAGE_KEY)
+        if (stored) {
           const parsed = JSON.parse(stored)
           // Charger les stats (on vérifie l'userId après)
-          if (parsed.stats) {
+          if (parsed && parsed.stats) {
             // Gérer la session - vérifier si c'est une nouvelle session (nouveau jour ou première visite)
             const storedSessionDate = localStorage.getItem(SESSION_DATE_KEY)
             const storedSessionStart = localStorage.getItem(SESSION_KEY)
@@ -97,7 +115,7 @@ export function StatsPage() {
             
             if (storedSessionDate === today && storedSessionStart) {
               // Même jour, continuer la session existante
-              startTime = parseInt(storedSessionStart)
+              startTime = parseInt(storedSessionStart) || Date.now()
             } else {
               // Nouveau jour ou première session
               startTime = Date.now()
@@ -107,45 +125,42 @@ export function StatsPage() {
             
             sessionStartRef.current = startTime
             
+            // S'assurer que dailyTimeRecords est un tableau valide
+            const dailyTimeRecords = Array.isArray(parsed.stats.dailyTimeRecords) 
+              ? parsed.stats.dailyTimeRecords 
+              : [{ date: today, minutes: 0 }]
+            
             return {
+              ...getDefaultStats(user?.createdAt),
               ...parsed.stats,
+              dailyTimeRecords,
               sessionStartTime: startTime
             }
           }
-        } catch {
-          // Ignorer les erreurs de parsing
         }
+      } catch {
+        // Ignorer les erreurs de parsing et retourner les valeurs par défaut
       }
     }
     
     // Initialiser les stats pour un nouvel utilisateur
     const newSessionStart = Date.now()
     sessionStartRef.current = newSessionStart
-    localStorage.setItem(SESSION_KEY, newSessionStart.toString())
-    localStorage.setItem(SESSION_DATE_KEY, today)
     
-    return {
-      totalHoursLearned: 0,
-      skillsWorkedOn: 0,
-      exercisesCompleted: 0,
-      achievementsUnlocked: 0,
-      currentStreak: 1,
-      longestStreak: 1,
-      accountCreatedAt: user?.createdAt || new Date().toISOString(),
-      dailyTimeRecords: [{
-        date: today,
-        minutes: 0
-      }],
-      lastActiveDate: today,
-      sessionStartTime: newSessionStart
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SESSION_KEY, newSessionStart.toString())
+      localStorage.setItem(SESSION_DATE_KEY, today)
     }
+    
+    return getDefaultStats(user?.createdAt)
   }, [user?.createdAt])
 
-  const [userStats, setUserStats] = useState<UserStatsData>(loadStats)
+  const [userStats, setUserStats] = useState<UserStatsData>(() => getDefaultStats(user?.createdAt))
   
-  // Recharger les stats si l'utilisateur change
+  // Charger les stats au montage et quand l'utilisateur change
   useEffect(() => {
     setUserStats(loadStats())
+    setIsLoading(false)
   }, [user?.id, loadStats])
 
   // Sauvegarder le temps passé
@@ -158,15 +173,19 @@ export function StatsPage() {
     if (timeSinceLastSave <= 0) return
     
     setUserStats(prev => {
+      // S'assurer que dailyTimeRecords est un tableau
+      const safeRecords = Array.isArray(prev?.dailyTimeRecords) ? prev.dailyTimeRecords : []
+      
       // Trouver ou créer l'enregistrement d'aujourd'hui
-      const existingIndex = prev.dailyTimeRecords.findIndex(r => r.date === today)
-      let newRecords = [...prev.dailyTimeRecords]
+      const existingIndex = safeRecords.findIndex(r => r?.date === today)
+      let newRecords = [...safeRecords]
       
       if (existingIndex >= 0) {
         // Ajouter le temps depuis la dernière sauvegarde
+        const currentMinutes = newRecords[existingIndex]?.minutes || 0
         newRecords[existingIndex] = {
           date: today,
-          minutes: newRecords[existingIndex].minutes + timeSinceLastSave
+          minutes: currentMinutes + timeSinceLastSave
         }
       } else {
         // Nouveau jour - ajouter un nouvel enregistrement
@@ -182,13 +201,13 @@ export function StatsPage() {
       }
       
       // Calculer le temps total
-      const totalMinutes = newRecords.reduce((sum, r) => sum + r.minutes, 0)
+      const totalMinutes = newRecords.reduce((sum, r) => sum + (r?.minutes || 0), 0)
       
       // Calculer la série (streak)
       let streak = 0
       for (let i = 0; i <= 365; i++) {
         const checkDate = getPastDate(i)
-        const record = newRecords.find(r => r.date === checkDate)
+        const record = newRecords.find(r => r?.date === checkDate)
         if (record && record.minutes > 0) {
           streak++
         } else if (i > 0) { // On ne casse pas la série si c'est aujourd'hui sans activité
@@ -197,12 +216,13 @@ export function StatsPage() {
       }
       
       return {
+        ...getDefaultStats(prev?.accountCreatedAt),
         ...prev,
         dailyTimeRecords: newRecords,
         totalHoursLearned: Math.round(totalMinutes / 60 * 10) / 10,
         lastActiveDate: today,
         currentStreak: streak,
-        longestStreak: Math.max(prev.longestStreak, streak)
+        longestStreak: Math.max(prev?.longestStreak || 1, streak)
       }
     })
     
@@ -241,15 +261,17 @@ export function StatsPage() {
 
   // Mettre à jour les compétences depuis UserData
   useEffect(() => {
-    const skillsCount = Object.keys(data.skillProgress || {}).length
+    const skillProgress = data?.skillProgress || {}
+    const skillsCount = Object.keys(skillProgress).length
     setUserStats(prev => ({
       ...prev,
       skillsWorkedOn: skillsCount
     }))
   }, [data])
 
-  // Obtenir les skills de l'utilisateur avec leur progression
-  const userSkillsWithDetails = Object.entries(data.skillProgress || {}).map(([skillId, progress]) => ({
+  // Obtenir les skills de l'utilisateur avec leur progression (avec protection)
+  const skillProgress = data?.skillProgress || {}
+  const userSkillsWithDetails = Object.entries(skillProgress).map(([skillId, progress]) => ({
     skillId,
     name: skillId.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
     level: (progress as { level?: number })?.level || 0,
@@ -290,11 +312,14 @@ export function StatsPage() {
   // Générer les données d'activité réelles pour la période sélectionnée
   const getActivityData = useCallback(() => {
     const count = period === 'week' ? 7 : period === 'month' ? 30 : 365
-    const data: { date: string; minutes: number; label: string }[] = []
+    const activityDataArray: { date: string; minutes: number; label: string }[] = []
+    
+    // S'assurer que dailyTimeRecords est un tableau
+    const safeRecords = Array.isArray(userStats?.dailyTimeRecords) ? userStats.dailyTimeRecords : []
     
     for (let i = count - 1; i >= 0; i--) {
       const date = getPastDate(i)
-      const record = userStats.dailyTimeRecords.find(r => r.date === date)
+      const record = safeRecords.find(r => r?.date === date)
       const minutes = record?.minutes || 0
       
       // Formater le label selon la période
@@ -309,16 +334,13 @@ export function StatsPage() {
         label = formatDateFr(date, 'medium')
       }
       
-      data.push({ date, minutes, label })
+      activityDataArray.push({ date, minutes, label })
     }
     
-    return data
-  }, [period, userStats.dailyTimeRecords])
+    return activityDataArray
+  }, [period, userStats?.dailyTimeRecords])
 
   const activityData = getActivityData()
-  
-  // Calculer la hauteur max pour normaliser les barres
-  const maxMinutes = Math.max(...activityData.map(d => d.minutes), 1)
   
   // Calculer les stats de la période sélectionnée
   const getPeriodStats = useCallback(() => {
@@ -326,9 +348,12 @@ export function StatsPage() {
     let totalMinutes = 0
     let daysActive = 0
     
+    // S'assurer que dailyTimeRecords est un tableau
+    const safeRecords = Array.isArray(userStats?.dailyTimeRecords) ? userStats.dailyTimeRecords : []
+    
     for (let i = 0; i < count; i++) {
       const date = getPastDate(i)
-      const record = userStats.dailyTimeRecords.find(r => r.date === date)
+      const record = safeRecords.find(r => r?.date === date)
       if (record && record.minutes > 0) {
         totalMinutes += record.minutes
         daysActive++
@@ -340,19 +365,21 @@ export function StatsPage() {
       daysActive,
       averagePerDay: daysActive > 0 ? Math.round(totalMinutes / daysActive) : 0
     }
-  }, [period, userStats.dailyTimeRecords])
+  }, [period, userStats?.dailyTimeRecords])
   
   const periodStats = getPeriodStats()
 
   // Temps passé aujourd'hui (en temps réel)
   const getTodayTime = useCallback(() => {
     const today = getTodayDate()
-    const record = userStats.dailyTimeRecords.find(r => r.date === today)
+    // S'assurer que dailyTimeRecords est un tableau
+    const safeRecords = Array.isArray(userStats?.dailyTimeRecords) ? userStats.dailyTimeRecords : []
+    const record = safeRecords.find(r => r?.date === today)
     const savedMinutes = record?.minutes || 0
     // Ajouter le temps depuis la dernière sauvegarde (pas depuis le début de session)
     const minutesSinceLastSave = Math.round((Date.now() - lastSaveRef.current) / 1000 / 60)
     return savedMinutes + Math.max(0, minutesSinceLastSave)
-  }, [userStats.dailyTimeRecords])
+  }, [userStats?.dailyTimeRecords])
 
   const [todayTime, setTodayTime] = useState(getTodayTime())
   
@@ -374,6 +401,23 @@ export function StatsPage() {
       y: rect.top - 10
     })
   }
+
+  // Afficher un état de chargement si les données ne sont pas encore prêtes
+  if (isLoading) {
+    return (
+      <div className="max-w-6xl mx-auto flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-primary-500/30 border-t-primary-500 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-dark-400">Chargement des statistiques...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Valeurs sûres pour le rendu
+  const safeUserStats = userStats || getDefaultStats(user?.createdAt)
+  const safeActivityData = Array.isArray(activityData) ? activityData : []
+  const safeMaxMinutes = Math.max(...safeActivityData.map(d => d?.minutes || 0), 1)
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -418,7 +462,7 @@ export function StatsPage() {
         </div>
         <div className="flex-1">
           <p className="text-sm text-dark-400">Membre depuis</p>
-          <p className="font-medium text-white">{formatDate(userStats.accountCreatedAt)}</p>
+          <p className="font-medium text-white">{formatDate(safeUserStats.accountCreatedAt)}</p>
         </div>
         <div className="text-right">
           <p className="text-sm text-dark-400">Ancienneté</p>
@@ -434,7 +478,7 @@ export function StatsPage() {
         >
           <StatCard
             label="Temps total sur le site"
-            value={`${userStats.totalHoursLearned}h`}
+            value={`${safeUserStats.totalHoursLearned}h`}
             change={todayTime > 0 ? 1 : 0}
             changeLabel={`+${formatTime(todayTime)} aujourd'hui`}
             icon={<Clock className="w-6 h-6 text-white" />}
@@ -448,8 +492,8 @@ export function StatsPage() {
         >
           <StatCard
             label="Compétences travaillées"
-            value={userStats.skillsWorkedOn}
-            change={userStats.skillsWorkedOn > 0 ? 1 : 0}
+            value={safeUserStats.skillsWorkedOn}
+            change={safeUserStats.skillsWorkedOn > 0 ? 1 : 0}
             icon={<Target className="w-6 h-6 text-white" />}
             gradient="from-secondary-500 to-pink-500"
           />
@@ -461,7 +505,7 @@ export function StatsPage() {
         >
           <StatCard
             label="Exercices complétés"
-            value={userStats.exercisesCompleted}
+            value={safeUserStats.exercisesCompleted}
             change={0}
             icon={<Code className="w-6 h-6 text-white" />}
             gradient="from-accent-500 to-emerald-500"
@@ -474,7 +518,7 @@ export function StatsPage() {
         >
           <StatCard
             label="Badges débloqués"
-            value={userStats.achievementsUnlocked}
+            value={safeUserStats.achievementsUnlocked}
             change={0}
             icon={<Award className="w-6 h-6 text-white" />}
             gradient="from-amber-500 to-orange-500"
@@ -496,12 +540,12 @@ export function StatsPage() {
             </div>
             <div>
               <p className="text-dark-400 text-sm">Série actuelle</p>
-              <p className="text-4xl font-bold text-white">{userStats.currentStreak} jour{userStats.currentStreak > 1 ? 's' : ''}</p>
+              <p className="text-4xl font-bold text-white">{safeUserStats.currentStreak} jour{safeUserStats.currentStreak > 1 ? 's' : ''}</p>
             </div>
           </div>
           <div className="text-right">
             <p className="text-dark-400 text-sm">Record</p>
-            <p className="text-2xl font-bold text-amber-400">{userStats.longestStreak} jours</p>
+            <p className="text-2xl font-bold text-amber-400">{safeUserStats.longestStreak} jours</p>
           </div>
         </div>
         
@@ -511,7 +555,9 @@ export function StatsPage() {
             const date = getPastDate(6 - i)
             const d = new Date(date)
             const dayNames = ['D', 'L', 'M', 'M', 'J', 'V', 'S']
-            const record = userStats.dailyTimeRecords.find(r => r.date === date)
+            // S'assurer que dailyTimeRecords est un tableau
+            const safeRecords = Array.isArray(safeUserStats?.dailyTimeRecords) ? safeUserStats.dailyTimeRecords : []
+            const record = safeRecords.find(r => r?.date === date)
             const hasActivity = record && record.minutes > 0
             const isToday = date === getTodayDate()
             
@@ -625,7 +671,7 @@ export function StatsPage() {
         </h2>
         
         {/* Tooltip */}
-        {hoveredBar !== null && (
+        {hoveredBar !== null && safeActivityData[hoveredBar] && (
           <div 
             className="fixed z-50 px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg shadow-xl pointer-events-none transform -translate-x-1/2 -translate-y-full"
             style={{ 
@@ -633,15 +679,15 @@ export function StatsPage() {
               top: tooltipPosition.y - 8
             }}
           >
-            <p className="text-xs text-dark-400">{activityData[hoveredBar]?.label}</p>
-            <p className="text-sm font-bold text-white">{formatTime(activityData[hoveredBar]?.minutes || 0)}</p>
+            <p className="text-xs text-dark-400">{safeActivityData[hoveredBar]?.label || ''}</p>
+            <p className="text-sm font-bold text-white">{formatTime(safeActivityData[hoveredBar]?.minutes || 0)}</p>
           </div>
         )}
         
         <div className="h-40 flex items-end justify-between gap-1">
-          {activityData.map((data, i) => {
-            const height = maxMinutes > 0 ? (data.minutes / maxMinutes) * 100 : 0
-            const isToday = data.date === getTodayDate()
+          {safeActivityData.map((barData, i) => {
+            const height = safeMaxMinutes > 0 ? ((barData?.minutes || 0) / safeMaxMinutes) * 100 : 0
+            const isToday = barData?.date === getTodayDate()
             
             return (
               <div
@@ -651,14 +697,14 @@ export function StatsPage() {
                     ? 'bg-primary-400 scale-110' 
                     : isToday
                     ? 'bg-primary-400'
-                    : data.minutes > 0 
+                    : (barData?.minutes || 0) > 0 
                     ? 'bg-primary-500 hover:bg-primary-400' 
                     : 'bg-dark-600 hover:bg-dark-500'
                 }`}
                 style={{ height: `${Math.max(height, 4)}%` }}
                 onMouseEnter={(e) => handleBarHover(i, e)}
                 onMouseLeave={() => setHoveredBar(null)}
-                title={`${data.label}: ${formatTime(data.minutes)}`}
+                title={`${barData?.label || ''}: ${formatTime(barData?.minutes || 0)}`}
               />
             )
           })}
