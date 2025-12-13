@@ -14,7 +14,7 @@ import { usePosts } from '../contexts/PostsContext'
 import { useReports } from '../contexts/ReportsContext'
 import { useAdminStats } from '../contexts/AdminStatsContext'
 import { useActivity } from '../contexts/ActivityContext'
-import { useUsers } from '../db'
+import { useUsers, userService } from '../db'
 
 // Interface pour les utilisateurs
 interface DisplayUser {
@@ -91,19 +91,56 @@ export function AdminDashboard() {
   // Utilisateurs depuis IndexedDB
   const { users: dbUsers } = useUsers()
 
-  // Charger tous les utilisateurs depuis IndexedDB
+  // Charger tous les utilisateurs depuis IndexedDB et fusionner avec localStorage
   useEffect(() => {
+    // Récupérer les rôles depuis localStorage (priorité)
+    let localStorageRoles: Record<string, string> = {}
+    try {
+      const registeredUsers = localStorage.getItem('workus_registered_users')
+      if (registeredUsers) {
+        const users = JSON.parse(registeredUsers)
+        users.forEach((u: any) => {
+          if (u.id && u.role) {
+            localStorageRoles[u.id] = u.role
+          }
+          // Aussi par email pour les anciens utilisateurs
+          if (u.email && u.role) {
+            localStorageRoles[u.email] = u.role
+          }
+        })
+      }
+      
+      // Aussi depuis la liste publique
+      const publicUsers = localStorage.getItem('workus_public_users')
+      if (publicUsers) {
+        const users = JSON.parse(publicUsers)
+        users.forEach((u: any) => {
+          if (u.id && u.role && !localStorageRoles[u.id]) {
+            localStorageRoles[u.id] = u.role
+          }
+        })
+      }
+    } catch {
+      // Ignorer
+    }
+
     if (Array.isArray(dbUsers) && dbUsers.length > 0) {
-      const displayUsers: DisplayUser[] = dbUsers.map(u => ({
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        role: u.role as DisplayUser['role'],
-        isActive: u.isActive,
-        isVerified: u.isVerified,
-        joinedAt: u.joinedAt,
-        avatar: u.avatar
-      }))
+      const displayUsers: DisplayUser[] = dbUsers.map(u => {
+        // Priorité au rôle de localStorage s'il existe
+        const roleFromStorage = localStorageRoles[u.id] || localStorageRoles[u.email]
+        const finalRole = (roleFromStorage || u.role) as DisplayUser['role']
+        
+        return {
+          id: u.id,
+          username: u.username,
+          email: u.email,
+          role: finalRole,
+          isActive: u.isActive,
+          isVerified: u.isVerified,
+          joinedAt: u.joinedAt,
+          avatar: u.avatar
+        }
+      })
       
       // Trier par date d'inscription (plus récent en premier)
       displayUsers.sort((a, b) => new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime())
@@ -215,14 +252,14 @@ export function AdminDashboard() {
   }
 
   // Changer le rôle d'un utilisateur
-  const handleChangeRole = (targetUser: DisplayUser, newRole: DisplayUser['role']) => {
+  const handleChangeRole = async (targetUser: DisplayUser, newRole: DisplayUser['role']) => {
     // Empêcher de modifier son propre rôle admin
     if (targetUser.id === user?.id && user?.role === 'admin') {
       displayToast('Vous ne pouvez pas modifier votre propre rôle', 'error')
       return
     }
 
-    // Mettre à jour dans localStorage
+    // 1. Mettre à jour dans localStorage (workus_registered_users)
     const stored = localStorage.getItem('workus_registered_users')
     if (stored) {
       try {
@@ -239,7 +276,45 @@ export function AdminDashboard() {
       }
     }
 
-    // Mettre à jour l'état local
+    // 2. Mettre à jour dans la liste publique (workus_public_users)
+    try {
+      const publicUsers = localStorage.getItem('workus_public_users')
+      if (publicUsers) {
+        const users = JSON.parse(publicUsers)
+        const updatedUsers = users.map((u: any) => {
+          if (u.id === targetUser.id) {
+            return { ...u, role: newRole }
+          }
+          return u
+        })
+        localStorage.setItem('workus_public_users', JSON.stringify(updatedUsers))
+      }
+    } catch {
+      // Ignorer
+    }
+
+    // 3. Mettre à jour dans IndexedDB (base de données principale)
+    try {
+      await userService.update(targetUser.id, { role: newRole })
+    } catch (error) {
+      console.error('Erreur mise à jour IndexedDB:', error)
+    }
+
+    // 4. Si l'utilisateur modifié est actuellement connecté, mettre à jour sa session
+    try {
+      const currentUserData = localStorage.getItem('workus_user')
+      if (currentUserData) {
+        const currentUser = JSON.parse(currentUserData)
+        if (currentUser.id === targetUser.id) {
+          currentUser.role = newRole
+          localStorage.setItem('workus_user', JSON.stringify(currentUser))
+        }
+      }
+    } catch {
+      // Ignorer
+    }
+
+    // 5. Mettre à jour l'état local
     setAllUsers(prev => prev.map(u => {
       if (u.id === targetUser.id) {
         return { ...u, role: newRole }

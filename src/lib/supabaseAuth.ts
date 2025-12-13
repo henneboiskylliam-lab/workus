@@ -33,6 +33,38 @@ function supabaseUserToAuthUser(user: User, profile?: any): AuthUser {
 }
 
 /**
+ * Récupère le rôle d'un utilisateur depuis localStorage
+ * Priorité : workus_registered_users > workus_public_users > rôle par défaut
+ */
+function getRoleFromStorage(userId: string, email: string, defaultRole: UserRole): UserRole {
+  try {
+    // 1. Chercher dans workus_registered_users
+    const registeredUsers = localStorage.getItem('workus_registered_users')
+    if (registeredUsers) {
+      const users = JSON.parse(registeredUsers)
+      const found = users.find((u: any) => u.id === userId || u.email === email)
+      if (found?.role) {
+        return found.role as UserRole
+      }
+    }
+    
+    // 2. Chercher dans workus_public_users
+    const publicUsers = localStorage.getItem('workus_public_users')
+    if (publicUsers) {
+      const users = JSON.parse(publicUsers)
+      const found = users.find((u: any) => u.id === userId)
+      if (found?.role) {
+        return found.role as UserRole
+      }
+    }
+  } catch {
+    // Ignorer
+  }
+  
+  return defaultRole
+}
+
+/**
  * Synchronise un utilisateur avec la liste publique
  * Cette liste permet aux autres utilisateurs de voir les profils
  */
@@ -245,11 +277,14 @@ export async function signIn(email: string, password: string): Promise<AuthResul
     try {
       const user = await userService.authenticate(email, password)
       if (user) {
+        // Récupérer le rôle depuis localStorage (priorité aux modifications admin)
+        const finalRole = getRoleFromStorage(user.id, user.email, user.role as UserRole)
+        
         const authUser: AuthUser = {
           id: user.id,
           email: user.email,
           username: user.username,
-          role: user.role as UserRole,
+          role: finalRole, // Utiliser le rôle de localStorage si modifié
           isActive: user.isActive,
           isVerified: user.isVerified,
           createdAt: user.joinedAt,
