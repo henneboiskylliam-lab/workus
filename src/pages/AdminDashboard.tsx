@@ -138,21 +138,36 @@ export function AdminDashboard() {
       const supabaseUsers = await loadUsersFromSupabase()
       
       // 2. Récupérer les OVERRIDES de rôles (modifications admin locales - PRIORITÉ MAXIMALE)
-      // Les overrides sont stockés par ID ET par email pour gérer les différences d'ID
+      // Nouvelle clé v2 pour éviter les conflits
+      const OVERRIDE_KEY = 'workus_role_overrides_v2'
       let roleOverrides: Record<string, string> = {}
       try {
-        const overrides = localStorage.getItem('workus_admin_role_overrides')
+        const overrides = localStorage.getItem(OVERRIDE_KEY)
+        console.log('Raw overrides from localStorage:', overrides)
         if (overrides) {
           roleOverrides = JSON.parse(overrides)
-          console.log('Overrides de rôles chargés:', JSON.stringify(roleOverrides))
+          console.log('Overrides de rôles chargés (v2):', JSON.stringify(roleOverrides))
+        } else {
+          // Essayer de migrer depuis l'ancienne clé
+          const oldOverrides = localStorage.getItem('workus_admin_role_overrides')
+          if (oldOverrides) {
+            roleOverrides = JSON.parse(oldOverrides)
+            localStorage.setItem(OVERRIDE_KEY, oldOverrides)
+            console.log('Overrides migrés depuis ancienne clé:', JSON.stringify(roleOverrides))
+          }
         }
-      } catch {
-        // Ignorer
+      } catch (err) {
+        console.error('Erreur lecture overrides:', err)
       }
 
-      // Fonction helper pour obtenir le rôle override (cherche par ID puis par email)
+      // Fonction helper pour obtenir le rôle override (cherche par email normalisé puis par ID)
       const getOverriddenRole = (id: string, email: string): string | undefined => {
-        return roleOverrides[id] || roleOverrides[email] || roleOverrides[email.toLowerCase()]
+        const emailKey = email?.toLowerCase()?.trim()
+        const result = roleOverrides[emailKey] || roleOverrides[id] || roleOverrides[email]
+        if (result) {
+          console.log(`Override trouvé pour ${email}: ${result}`)
+        }
+        return result
       }
       
       // 3. Récupérer les rôles depuis localStorage (pour les utilisateurs locaux)
@@ -359,27 +374,36 @@ export function AdminDashboard() {
       return
     }
 
-    console.log('=== Changement de rôle v5 ===')
+    console.log('=== Changement de rôle v6 ===')
     console.log('Utilisateur:', targetUser.username, 'ID:', targetUser.id, 'Email:', targetUser.email)
     console.log('Ancien rôle:', targetUser.role, '-> Nouveau rôle:', newRole)
 
     // ÉTAPE 1: Sauvegarder l'OVERRIDE local - SOURCE DE VÉRITÉ ABSOLUE
-    // On sauvegarde PAR ID ET PAR EMAIL pour garantir la correspondance
-    // même si l'ID change entre Supabase et local
+    // On sauvegarde PAR EMAIL uniquement (clé stable et unique)
+    const OVERRIDE_KEY = 'workus_role_overrides_v2'
     try {
-      const overrides = localStorage.getItem('workus_admin_role_overrides')
+      const overrides = localStorage.getItem(OVERRIDE_KEY)
+      console.log('Overrides avant modification:', overrides)
       const currentOverrides = overrides ? JSON.parse(overrides) : {}
-      // Sauvegarder par ID
+      
+      // Utiliser l'email normalisé comme clé principale (plus stable que l'ID)
+      const emailKey = targetUser.email.toLowerCase().trim()
+      currentOverrides[emailKey] = newRole
+      // Aussi sauvegarder par ID au cas où
       currentOverrides[targetUser.id] = newRole
-      // Sauvegarder aussi par EMAIL (clé plus stable)
-      if (targetUser.email) {
-        currentOverrides[targetUser.email] = newRole
-        currentOverrides[targetUser.email.toLowerCase()] = newRole
+      
+      const newOverridesStr = JSON.stringify(currentOverrides)
+      localStorage.setItem(OVERRIDE_KEY, newOverridesStr)
+      
+      // Vérification immédiate
+      const verification = localStorage.getItem(OVERRIDE_KEY)
+      console.log('✅ Override sauvegardé. Vérification:', verification)
+      
+      if (verification !== newOverridesStr) {
+        console.error('❌ ERREUR: Les overrides n\'ont pas été sauvegardés correctement!')
       }
-      localStorage.setItem('workus_admin_role_overrides', JSON.stringify(currentOverrides))
-      console.log('✅ Override local sauvegardé:', targetUser.id, targetUser.email, '->', newRole)
     } catch (err) {
-      console.error('Erreur sauvegarde override:', err)
+      console.error('❌ Erreur sauvegarde override:', err)
     }
 
     // ÉTAPE 2: Mettre à jour dans tous les autres stockages (en parallèle, non-bloquant)
