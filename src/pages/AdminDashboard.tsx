@@ -331,9 +331,9 @@ export function AdminDashboard() {
       return
     }
 
-    console.log('=== Changement de rôle ===')
-    console.log('Utilisateur:', targetUser.username, targetUser.id)
-    console.log('Nouveau rôle:', newRole)
+    console.log('=== Changement de rôle v2 ===')
+    console.log('Utilisateur:', targetUser.username, 'ID:', targetUser.id)
+    console.log('Ancien rôle:', targetUser.role, '-> Nouveau rôle:', newRole)
 
     // 1. Mettre à jour dans Supabase (source principale)
     let supabaseUpdateSuccess = false
