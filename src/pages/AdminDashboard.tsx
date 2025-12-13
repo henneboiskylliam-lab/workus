@@ -87,7 +87,7 @@ export function AdminDashboard() {
   const { posts } = usePosts()
   const { reports: contextReports, getPendingCount } = useReports()
   const { stats: adminStats, getStatsForPeriod, getUserEvolution, recordDailySnapshot } = useAdminStats()
-  const { activities, getRecentActivities, getActivityTimeStats, recordGlobalActivity, userActivities } = useActivity()
+  const { activities, getRecentActivities, getActivityTimeStats, recordGlobalActivity, userActivities, addActivity } = useActivity()
   
   // Utilisateurs depuis IndexedDB
   const { users: dbUsers } = useUsers()
@@ -332,20 +332,54 @@ export function AdminDashboard() {
     }
 
     // 1. Mettre à jour dans Supabase (source principale)
+    let supabaseUpdateSuccess = false
     if (checkSupabase() && supabase) {
       try {
-        const { error } = await supabase
-          .from('profiles')
-          .update({ role: newRole, updated_at: new Date().toISOString() })
-          .eq('id', targetUser.id)
+        // Utiliser la fonction RPC sécurisée
+        const { data: rpcResult, error: rpcError } = await supabase
+          .rpc('update_user_role', { 
+            target_user_id: targetUser.id, 
+            new_role: newRole 
+          })
         
-        if (error) {
-          console.error('Erreur mise à jour Supabase:', error)
-          displayToast('Erreur lors de la mise à jour dans Supabase', 'error')
-          return
+        console.log('RPC result:', rpcResult, 'error:', rpcError)
+        
+        if (rpcError) {
+          // Si la fonction RPC n'existe pas (code 42883), essayer la mise à jour directe
+          if (rpcError.code === '42883' || rpcError.message.includes('does not exist')) {
+            console.warn('Fonction RPC non trouvée, tentative directe')
+            
+            const { data, error } = await supabase
+              .from('profiles')
+              .update({ role: newRole, updated_at: new Date().toISOString() })
+              .eq('id', targetUser.id)
+              .select()
+            
+            if (error) {
+              console.error('Erreur mise à jour Supabase:', error)
+              displayToast('Exécutez le script SQL dans Supabase (voir console)', 'error')
+            } else if (!data || data.length === 0) {
+              console.warn('Mise à jour bloquée par RLS')
+              displayToast('Permissions insuffisantes. Exécutez le script SQL.', 'error')
+            } else {
+              console.log('Mise à jour Supabase réussie:', data)
+              supabaseUpdateSuccess = true
+            }
+          } else {
+            console.error('Erreur RPC:', rpcError)
+            displayToast(`Erreur: ${rpcError.message}`, 'error')
+          }
+        } else if (rpcResult && rpcResult.success === false) {
+          // La fonction a retourné une erreur métier
+          console.error('Erreur métier:', rpcResult.error)
+          displayToast(`Erreur: ${rpcResult.error}`, 'error')
+        } else {
+          console.log('Mise à jour Supabase réussie via RPC')
+          supabaseUpdateSuccess = true
         }
       } catch (err) {
         console.error('Erreur Supabase:', err)
+        displayToast('Erreur de connexion à Supabase', 'error')
       }
     }
 

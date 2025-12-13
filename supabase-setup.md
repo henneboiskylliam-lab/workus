@@ -150,6 +150,55 @@ npm run build
 
 Puis redéployez sur Vercel.
 
+## Étape 5 : Permettre aux admins de modifier les rôles
+
+**IMPORTANT** : Si les changements de rôle ne sont pas persistants, exécutez ce script dans le SQL Editor :
+
+```sql
+-- Supprimer les anciennes politiques de mise à jour
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
+DROP POLICY IF EXISTS "Admins can update all profiles" ON profiles;
+
+-- Politique : les utilisateurs peuvent modifier leur propre profil (sauf le rôle)
+CREATE POLICY "Users can update own profile" ON profiles
+  FOR UPDATE 
+  USING (auth.uid() = id);
+
+-- Politique : les admins peuvent modifier TOUS les profils (y compris les rôles)
+-- Cette politique utilise SECURITY DEFINER pour éviter les problèmes de récursion
+CREATE POLICY "Admins can update all profiles" ON profiles
+  FOR UPDATE 
+  USING (
+    (SELECT role FROM profiles WHERE id = auth.uid()) = 'admin'
+  );
+
+-- Alternative : Si les politiques ci-dessus ne fonctionnent pas,
+-- vous pouvez créer une fonction RPC pour mettre à jour les rôles
+CREATE OR REPLACE FUNCTION update_user_role(target_user_id UUID, new_role TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+  caller_role TEXT;
+BEGIN
+  -- Vérifier que l'appelant est admin
+  SELECT role INTO caller_role FROM profiles WHERE id = auth.uid();
+  
+  IF caller_role != 'admin' THEN
+    RAISE EXCEPTION 'Seuls les administrateurs peuvent modifier les rôles';
+  END IF;
+  
+  -- Mettre à jour le rôle
+  UPDATE profiles 
+  SET role = new_role, updated_at = NOW()
+  WHERE id = target_user_id;
+  
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Donner les permissions d'exécution
+GRANT EXECUTE ON FUNCTION update_user_role TO authenticated;
+```
+
 ## Résultat
 
 Une fois configuré :
