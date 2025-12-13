@@ -66,7 +66,10 @@ export interface PublicUser {
   username: string
   avatar?: string
   bio?: string
+  role?: 'user' | 'creator' | 'moderator' | 'admin'
   followers?: string[]
+  location?: string
+  joinedAt?: string
 }
 
 interface UserDataContextType {
@@ -77,6 +80,7 @@ interface UserDataContextType {
   // Users (pour consulter d'autres profils)
   users: PublicUser[]
   getUserById: (id: string) => PublicUser | undefined
+  updatePublicUser: (userData: PublicUser) => void
   
   // Saved items
   saveItem: (itemId: string, itemType: string) => Promise<void>
@@ -134,6 +138,7 @@ const defaultContextValue: UserDataContextType = {
   isLoading: false,
   users: [],
   getUserById: () => undefined,
+  updatePublicUser: () => {},
   saveItem: async () => {},
   unsaveItem: async () => {},
   isSaved: () => false,
@@ -252,6 +257,28 @@ export function UserDataProvider({ children }: UserDataProviderProps) {
   const getUserById = useCallback((id: string): PublicUser | undefined => {
     return users.find((u) => u.id === id)
   }, [users])
+
+  // Mettre à jour ou ajouter un utilisateur public (stockage GLOBAL partagé)
+  const updatePublicUser = useCallback((userData: PublicUser) => {
+    setUsers(prev => {
+      const existingIndex = prev.findIndex(u => u.id === userData.id)
+      let newUsers: PublicUser[]
+      
+      if (existingIndex >= 0) {
+        // Mettre à jour l'utilisateur existant
+        newUsers = [...prev]
+        newUsers[existingIndex] = { ...newUsers[existingIndex], ...userData }
+      } else {
+        // Ajouter un nouvel utilisateur
+        newUsers = [...prev, userData]
+      }
+      
+      // Sauvegarder immédiatement dans localStorage (stockage global)
+      localStorage.setItem("workus_public_users", JSON.stringify(newUsers))
+      
+      return newUsers
+    })
+  }, [])
 
   // Charger les données depuis la DB
   useEffect(() => {
@@ -530,6 +557,7 @@ export function UserDataProvider({ children }: UserDataProviderProps) {
     isLoading,
     users,
     getUserById,
+    updatePublicUser,
     saveItem,
     unsaveItem,
     isSaved,

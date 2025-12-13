@@ -29,16 +29,13 @@ export interface PrivateMessage {
 
 export interface Conversation {
   id: string
-  participantId: string
-  participantName: string
-  participantAvatar?: string
+  participants: string[] // Les deux IDs des participants
+  participantNames: Record<string, string> // userId -> username
+  participantAvatars: Record<string, string | undefined> // userId -> avatar
   lastMessage?: string
   lastMessageAt?: string
-  lastMessageStatus?: MessageStatus
   lastMessageSenderId?: string
-  unreadCount: number
-  isOnline?: boolean
-  lastSeen?: string
+  unreadCounts: Record<string, number> // userId -> unreadCount
 }
 
 interface MessagesContextType {
@@ -55,13 +52,14 @@ interface MessagesContextType {
   toggleMessages: () => void
   sendMessage: (content: string) => void
   markAsRead: (conversationId: string) => void
-  markAsDelivered: (conversationId: string) => void
   getConversationMessages: (conversationId: string) => PrivateMessage[]
   setActiveConversationNull: () => void
+  getParticipantInfo: (conv: Conversation) => { id: string; name: string; avatar?: string }
 }
 
-const MESSAGES_STORAGE_KEY = 'workus_private_messages'
-const CONVERSATIONS_STORAGE_KEY = 'workus_conversations'
+// Clé globale pour les messages (partagée entre tous les utilisateurs)
+const GLOBAL_MESSAGES_KEY = 'workus_global_messages'
+const GLOBAL_CONVERSATIONS_KEY = 'workus_global_conversations'
 
 const defaultContextValue: MessagesContextType = {
   conversations: [],
@@ -75,9 +73,9 @@ const defaultContextValue: MessagesContextType = {
   toggleMessages: () => {},
   sendMessage: () => {},
   markAsRead: () => {},
-  markAsDelivered: () => {},
   getConversationMessages: () => [],
-  setActiveConversationNull: () => {}
+  setActiveConversationNull: () => {},
+  getParticipantInfo: () => ({ id: '', name: '' })
 }
 
 const MessagesContext = createContext<MessagesContextType>(defaultContextValue)
@@ -87,8 +85,8 @@ interface MessagesProviderProps {
 }
 
 /**
- * MessagesProvider - Gère les messages privés avec persistance localStorage
- * Inclut un système d'accusé de réception complet
+ * MessagesProvider - Gère les messages privés avec stockage GLOBAL
+ * Les messages sont partagés entre tous les utilisateurs via localStorage
  */
 export function MessagesProvider({ children }: MessagesProviderProps) {
   const { user } = useAuth()
@@ -97,80 +95,76 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
   const [activeConversation, setActiveConversation] = useState<string | null>(null)
   const [isOpen, setIsOpen] = useState(false)
 
-  // Charger les données depuis localStorage
-  useEffect(() => {
-    if (!user?.id) return
+  // Charger les données globales depuis localStorage
+  const loadGlobalData = useCallback(() => {
+    try {
+      const storedConversations = localStorage.getItem(GLOBAL_CONVERSATIONS_KEY)
+      const storedMessages = localStorage.getItem(GLOBAL_MESSAGES_KEY)
+      
+      if (storedConversations) {
+        setConversations(JSON.parse(storedConversations))
+      }
+      if (storedMessages) {
+        setMessages(JSON.parse(storedMessages))
+      }
+    } catch (error) {
+      console.error('Erreur chargement messages:', error)
+    }
+  }, [])
 
-    const loadData = () => {
-      try {
-        const storedConversations = localStorage.getItem(`${CONVERSATIONS_STORAGE_KEY}_${user.id}`)
-        const storedMessages = localStorage.getItem(`${MESSAGES_STORAGE_KEY}_${user.id}`)
-        
-        if (storedConversations) {
-          setConversations(JSON.parse(storedConversations))
-        }
-        if (storedMessages) {
-          setMessages(JSON.parse(storedMessages))
-        }
-      } catch (error) {
-        console.error('Erreur chargement messages:', error)
+  // Charger au démarrage
+  useEffect(() => {
+    loadGlobalData()
+  }, [loadGlobalData])
+
+  // Écouter les changements de localStorage (pour la synchronisation entre onglets/utilisateurs)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === GLOBAL_CONVERSATIONS_KEY || e.key === GLOBAL_MESSAGES_KEY) {
+        loadGlobalData()
       }
     }
 
-    loadData()
-  }, [user?.id])
+    window.addEventListener('storage', handleStorageChange)
+    
+    // Polling pour détecter les changements locaux (même onglet)
+    const pollInterval = setInterval(() => {
+      loadGlobalData()
+    }, 2000)
 
-  // Sauvegarder les données
-  useEffect(() => {
-    if (!user?.id) return
-    localStorage.setItem(`${CONVERSATIONS_STORAGE_KEY}_${user.id}`, JSON.stringify(conversations))
-  }, [conversations, user?.id])
-
-  useEffect(() => {
-    if (!user?.id) return
-    localStorage.setItem(`${MESSAGES_STORAGE_KEY}_${user.id}`, JSON.stringify(messages))
-  }, [messages, user?.id])
-
-  // Simuler la livraison des messages après 1 seconde
-  useEffect(() => {
-    const pendingMessages = Object.values(messages).flat().filter(msg => 
-      msg.senderId === user?.id && msg.status === 'sent'
-    )
-
-    if (pendingMessages.length > 0) {
-      const timeout = setTimeout(() => {
-        setMessages(prev => {
-          const updated = { ...prev }
-          Object.keys(updated).forEach(convId => {
-            updated[convId] = updated[convId].map(msg => 
-              msg.senderId === user?.id && msg.status === 'sent'
-                ? { ...msg, status: 'delivered' as MessageStatus, deliveredAt: new Date().toISOString() }
-                : msg
-            )
-          })
-          return updated
-        })
-
-        // Mettre à jour le statut dans les conversations
-        setConversations(prev => prev.map(conv => {
-          if (conv.lastMessageSenderId === user?.id && conv.lastMessageStatus === 'sent') {
-            return { ...conv, lastMessageStatus: 'delivered' as MessageStatus }
-          }
-          return conv
-        }))
-      }, 1000)
-
-      return () => clearTimeout(timeout)
+    return () => {
+      window.removeEventListener('storage', handleStorageChange)
+      clearInterval(pollInterval)
     }
-  }, [messages, user?.id])
+  }, [loadGlobalData])
 
-  // Calculer le total de non lus
-  const totalUnread = conversations.reduce((sum, conv) => sum + conv.unreadCount, 0)
+  // Sauvegarder les données globales
+  const saveGlobalData = useCallback((newConversations: Conversation[], newMessages: Record<string, PrivateMessage[]>) => {
+    localStorage.setItem(GLOBAL_CONVERSATIONS_KEY, JSON.stringify(newConversations))
+    localStorage.setItem(GLOBAL_MESSAGES_KEY, JSON.stringify(newMessages))
+  }, [])
+
+  // Calculer le total de non lus pour l'utilisateur actuel
+  const totalUnread = user?.id 
+    ? conversations.reduce((sum, conv) => sum + (conv.unreadCounts[user.id] || 0), 0)
+    : 0
 
   // Générer un ID de conversation unique
   const getConversationId = useCallback((userId1: string, userId2: string) => {
     return [userId1, userId2].sort().join('_')
   }, [])
+
+  // Obtenir les infos du participant (l'autre utilisateur)
+  const getParticipantInfo = useCallback((conv: Conversation): { id: string; name: string; avatar?: string } => {
+    if (!user?.id) return { id: '', name: 'Utilisateur' }
+    
+    const otherId = conv.participants.find(p => p !== user.id) || conv.participants[0]
+    return {
+      id: otherId,
+      name: conv.participantNames[otherId] || 'Utilisateur',
+      avatar: conv.participantAvatars[otherId]
+    }
+  }, [user?.id])
 
   // Ouvrir une conversation (ou la créer si elle n'existe pas)
   const openConversation = useCallback((userId: string, userName: string, userAvatar?: string) => {
@@ -179,30 +173,59 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
     const conversationId = getConversationId(user.id, userId)
     
     // Vérifier si la conversation existe déjà
-    const existingConv = conversations.find(c => c.id === conversationId)
+    let existingConv = conversations.find(c => c.id === conversationId)
     
     if (!existingConv) {
       // Créer une nouvelle conversation
       const newConversation: Conversation = {
         id: conversationId,
-        participantId: userId,
-        participantName: userName,
-        participantAvatar: userAvatar,
-        unreadCount: 0
+        participants: [user.id, userId],
+        participantNames: {
+          [user.id]: user.username || 'Moi',
+          [userId]: userName
+        },
+        participantAvatars: {
+          [userId]: userAvatar
+        },
+        unreadCounts: {
+          [user.id]: 0,
+          [userId]: 0
+        }
       }
-      setConversations(prev => [newConversation, ...prev])
+      
+      const newConversations = [newConversation, ...conversations]
+      setConversations(newConversations)
+      saveGlobalData(newConversations, messages)
+    } else {
+      // Mettre à jour les noms si nécessaire
+      const updatedConv = {
+        ...existingConv,
+        participantNames: {
+          ...existingConv.participantNames,
+          [user.id]: user.username || 'Moi',
+          [userId]: userName
+        },
+        participantAvatars: {
+          ...existingConv.participantAvatars,
+          [userId]: userAvatar
+        }
+      }
+      
+      const newConversations = conversations.map(c => c.id === conversationId ? updatedConv : c)
+      setConversations(newConversations)
+      saveGlobalData(newConversations, messages)
     }
 
     setActiveConversation(conversationId)
     setIsOpen(true)
-  }, [user?.id, conversations, getConversationId])
+  }, [user, conversations, messages, getConversationId, saveGlobalData])
 
   // Sélectionner une conversation existante
   const selectConversation = useCallback((conversationId: string) => {
     setActiveConversation(conversationId)
   }, [])
 
-  // Remettre activeConversation à null (pour revenir à la liste)
+  // Remettre activeConversation à null
   const setActiveConversationNull = useCallback(() => {
     setActiveConversation(null)
   }, [])
@@ -224,54 +247,64 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
     const conversation = conversations.find(c => c.id === activeConversation)
     if (!conversation) return
 
+    const receiverId = conversation.participants.find(p => p !== user.id)
+    if (!receiverId) return
+
     const now = new Date().toISOString()
     const newMessage: PrivateMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       conversationId: activeConversation,
       senderId: user.id,
       senderName: user.username || 'Moi',
-      receiverId: conversation.participantId,
-      receiverName: conversation.participantName,
+      receiverId: receiverId,
+      receiverName: conversation.participantNames[receiverId] || 'Utilisateur',
       content: content.trim(),
-      status: 'sending',
+      status: 'sent', // Directement envoyé
       createdAt: now
     }
 
     // Ajouter le message
-    setMessages(prev => ({
-      ...prev,
-      [activeConversation]: [...(prev[activeConversation] || []), newMessage]
-    }))
+    const newMessages = {
+      ...messages,
+      [activeConversation]: [...(messages[activeConversation] || []), newMessage]
+    }
 
-    // Mettre à jour la conversation
-    setConversations(prev => prev.map(conv => 
+    // Mettre à jour la conversation avec le nouveau message et incrémenter le compteur pour le destinataire
+    const newConversations = conversations.map(conv => 
       conv.id === activeConversation
         ? { 
             ...conv, 
             lastMessage: content, 
             lastMessageAt: now,
-            lastMessageStatus: 'sending' as MessageStatus,
-            lastMessageSenderId: user.id
+            lastMessageSenderId: user.id,
+            unreadCounts: {
+              ...conv.unreadCounts,
+              [receiverId]: (conv.unreadCounts[receiverId] || 0) + 1
+            }
           }
         : conv
-    ))
+    )
 
-    // Simuler l'envoi (passe à 'sent' après 300ms)
+    setMessages(newMessages)
+    setConversations(newConversations)
+    saveGlobalData(newConversations, newMessages)
+
+    // Simuler la livraison après 1 seconde
     setTimeout(() => {
-      setMessages(prev => ({
-        ...prev,
-        [activeConversation]: (prev[activeConversation] || []).map(msg =>
-          msg.id === newMessage.id ? { ...msg, status: 'sent' as MessageStatus } : msg
-        )
-      }))
-      
-      setConversations(prev => prev.map(conv => 
-        conv.id === activeConversation && conv.lastMessageSenderId === user.id
-          ? { ...conv, lastMessageStatus: 'sent' as MessageStatus }
-          : conv
-      ))
-    }, 300)
-  }, [user, activeConversation, conversations])
+      setMessages(prev => {
+        const updated = {
+          ...prev,
+          [activeConversation]: (prev[activeConversation] || []).map(msg =>
+            msg.id === newMessage.id ? { ...msg, status: 'delivered' as MessageStatus, deliveredAt: new Date().toISOString() } : msg
+          )
+        }
+        // Sauvegarder
+        const currentConvs = JSON.parse(localStorage.getItem(GLOBAL_CONVERSATIONS_KEY) || '[]')
+        localStorage.setItem(GLOBAL_MESSAGES_KEY, JSON.stringify(updated))
+        return updated
+      })
+    }, 1000)
+  }, [user, activeConversation, conversations, messages, saveGlobalData])
 
   // Marquer les messages comme lus
   const markAsRead = useCallback((conversationId: string) => {
@@ -279,50 +312,33 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
 
     const now = new Date().toISOString()
 
-    // Marquer tous les messages reçus comme lus
-    setMessages(prev => ({
-      ...prev,
-      [conversationId]: (prev[conversationId] || []).map(msg => 
+    // Mettre à jour les messages reçus comme lus
+    const newMessages = {
+      ...messages,
+      [conversationId]: (messages[conversationId] || []).map(msg => 
         msg.receiverId === user.id && msg.status !== 'read'
           ? { ...msg, status: 'read' as MessageStatus, readAt: now }
           : msg
       )
-    }))
+    }
 
-    // Réinitialiser le compteur de non lus
-    setConversations(prev => prev.map(conv =>
+    // Réinitialiser le compteur de non lus pour cet utilisateur
+    const newConversations = conversations.map(conv =>
       conv.id === conversationId 
-        ? { ...conv, unreadCount: 0 }
+        ? { 
+            ...conv, 
+            unreadCounts: {
+              ...conv.unreadCounts,
+              [user.id]: 0
+            }
+          }
         : conv
-    ))
+    )
 
-    // Mettre à jour le statut des messages envoyés par l'autre utilisateur
-    // (simuler que l'autre utilisateur voit que nous avons lu)
-    setMessages(prev => ({
-      ...prev,
-      [conversationId]: (prev[conversationId] || []).map(msg => 
-        msg.senderId !== user.id && (msg.status === 'sent' || msg.status === 'delivered')
-          ? { ...msg, status: 'read' as MessageStatus, readAt: now }
-          : msg
-      )
-    }))
-  }, [user?.id])
-
-  // Marquer les messages comme livrés
-  const markAsDelivered = useCallback((conversationId: string) => {
-    if (!user?.id) return
-
-    const now = new Date().toISOString()
-
-    setMessages(prev => ({
-      ...prev,
-      [conversationId]: (prev[conversationId] || []).map(msg => 
-        msg.receiverId === user.id && msg.status === 'sent'
-          ? { ...msg, status: 'delivered' as MessageStatus, deliveredAt: now }
-          : msg
-      )
-    }))
-  }, [user?.id])
+    setMessages(newMessages)
+    setConversations(newConversations)
+    saveGlobalData(newConversations, newMessages)
+  }, [user?.id, messages, conversations, saveGlobalData])
 
   // Obtenir les messages d'une conversation
   const getConversationMessages = useCallback((conversationId: string): PrivateMessage[] => {
@@ -341,9 +357,9 @@ export function MessagesProvider({ children }: MessagesProviderProps) {
     toggleMessages,
     sendMessage,
     markAsRead,
-    markAsDelivered,
     getConversationMessages,
-    setActiveConversationNull
+    setActiveConversationNull,
+    getParticipantInfo
   }
 
   return (

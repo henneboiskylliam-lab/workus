@@ -2,9 +2,9 @@ import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   MessageCircle, X, Send, ArrowLeft, Search, 
-  Check, CheckCheck, Clock, Loader2
+  Check, CheckCheck, Clock
 } from 'lucide-react'
-import { useMessages, MessageStatus } from '../../contexts/MessagesContext'
+import { useMessages, MessageStatus, Conversation } from '../../contexts/MessagesContext'
 import { useAuth } from '../../contexts/AuthContext'
 
 /**
@@ -29,8 +29,7 @@ function MessageStatusIcon({ status, isOwn }: { status: MessageStatus; isOwn: bo
 
 /**
  * MessagesPopup - Bulle de messagerie privée
- * Affiche les conversations et permet d'envoyer des messages
- * Inclut un système d'accusé de réception (envoyé, reçu, lu)
+ * Système de messages partagé entre utilisateurs
  */
 export function MessagesPopup() {
   const { user } = useAuth()
@@ -46,7 +45,8 @@ export function MessagesPopup() {
     sendMessage,
     markAsRead,
     getConversationMessages,
-    setActiveConversationNull
+    setActiveConversationNull,
+    getParticipantInfo
   } = useMessages()
 
   const [messageInput, setMessageInput] = useState('')
@@ -82,7 +82,6 @@ export function MessagesPopup() {
   // Réinitialiser la vue quand on ferme
   useEffect(() => {
     if (!isOpen) {
-      // Ne pas réinitialiser immédiatement pour l'animation
       setTimeout(() => {
         if (!isOpen) {
           setView('list')
@@ -110,20 +109,26 @@ export function MessagesPopup() {
     setActiveConversationNull()
   }
 
-  const handleSelectConversation = (conversationId: string) => {
-    const conv = conversations.find(c => c.id === conversationId)
-    if (conv) {
-      selectConversation(conversationId)
-      openConversation(conv.participantId, conv.participantName, conv.participantAvatar)
-    }
+  const handleSelectConversation = (conv: Conversation) => {
+    const participant = getParticipantInfo(conv)
+    selectConversation(conv.id)
+    openConversation(participant.id, participant.name, participant.avatar)
   }
 
+  // Obtenir la conversation active
   const activeConv = conversations.find(c => c.id === activeConversation)
+  const activeParticipant = activeConv ? getParticipantInfo(activeConv) : null
 
-  // Filtrer les conversations
-  const filteredConversations = conversations.filter(conv =>
-    conv.participantName.toLowerCase().includes(searchQuery.toLowerCase())
+  // Filtrer les conversations où l'utilisateur est participant
+  const myConversations = conversations.filter(conv => 
+    user?.id && conv.participants.includes(user.id)
   )
+
+  // Filtrer par recherche
+  const filteredConversations = myConversations.filter(conv => {
+    const participant = getParticipantInfo(conv)
+    return participant.name.toLowerCase().includes(searchQuery.toLowerCase())
+  })
 
   // Formater le temps
   const formatTime = (dateString: string) => {
@@ -141,17 +146,10 @@ export function MessagesPopup() {
     return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
   }
 
-  // Obtenir le texte de statut pour la liste
-  const getStatusText = (conv: typeof conversations[0]) => {
-    if (!conv.lastMessageStatus || conv.lastMessageSenderId !== user?.id) return null
-    
-    switch (conv.lastMessageStatus) {
-      case 'sending': return 'Envoi...'
-      case 'sent': return 'Envoyé'
-      case 'delivered': return 'Reçu'
-      case 'read': return 'Lu'
-      default: return null
-    }
+  // Obtenir le nombre de non lus pour une conversation
+  const getUnreadCount = (conv: Conversation): number => {
+    if (!user?.id) return 0
+    return conv.unreadCounts[user.id] || 0
   }
 
   return (
@@ -186,7 +184,7 @@ export function MessagesPopup() {
             {/* Header */}
             <div className="p-4 border-b border-dark-700 bg-dark-800/80 backdrop-blur-sm">
               <div className="flex items-center justify-between">
-                {view === 'chat' && activeConv ? (
+                {view === 'chat' && activeParticipant ? (
                   <div className="flex items-center gap-3">
                     <button
                       onClick={handleBack}
@@ -196,23 +194,23 @@ export function MessagesPopup() {
                       <ArrowLeft className="w-5 h-5 text-dark-400 hover:text-white" />
                     </button>
                     <button
-                      onClick={() => window.location.href = `/profile/${activeConv.participantId}`}
+                      onClick={() => window.location.href = `/profile/${activeParticipant.id}`}
                       className="flex items-center gap-2 hover:bg-dark-700/50 rounded-lg px-2 py-1 transition-colors"
                       title="Voir le profil"
                     >
-                      {activeConv.participantAvatar ? (
+                      {activeParticipant.avatar ? (
                         <img 
-                          src={activeConv.participantAvatar} 
-                          alt={activeConv.participantName}
+                          src={activeParticipant.avatar} 
+                          alt={activeParticipant.name}
                           className="w-8 h-8 rounded-full object-cover ring-2 ring-transparent hover:ring-primary-500 transition-all"
                         />
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500 to-secondary-500 flex items-center justify-center text-white text-sm font-bold">
-                          {activeConv.participantName[0].toUpperCase()}
+                          {activeParticipant.name[0]?.toUpperCase() || 'U'}
                         </div>
                       )}
                       <div className="text-left">
-                        <span className="font-medium text-white text-sm">{activeConv.participantName}</span>
+                        <span className="font-medium text-white text-sm">{activeParticipant.name}</span>
                         <p className="text-xs text-dark-500">Cliquez pour voir le profil</p>
                       </div>
                     </button>
@@ -268,77 +266,75 @@ export function MessagesPopup() {
                     </div>
                   ) : (
                     <div className="divide-y divide-dark-700/50">
-                      {filteredConversations.map(conv => (
-                        <button
-                          key={conv.id}
-                          onClick={() => handleSelectConversation(conv.id)}
-                          className={`w-full p-4 flex items-center gap-3 hover:bg-dark-700/50 transition-colors text-left ${
-                            conv.unreadCount > 0 ? 'bg-primary-500/5' : ''
-                          }`}
-                        >
-                          {/* Avatar */}
-                          <div className="relative">
-                            {conv.participantAvatar ? (
-                              <img 
-                                src={conv.participantAvatar} 
-                                alt={conv.participantName}
-                                className="w-12 h-12 rounded-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary-500 to-secondary-500 flex items-center justify-center text-white font-bold">
-                                {conv.participantName[0].toUpperCase()}
-                              </div>
-                            )}
-                            {/* Indicateur en ligne (simulé) */}
-                            {conv.isOnline && (
-                              <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-dark-800 rounded-full" />
-                            )}
-                          </div>
+                      {filteredConversations.map(conv => {
+                        const participant = getParticipantInfo(conv)
+                        const unreadCount = getUnreadCount(conv)
+                        const isFromMe = conv.lastMessageSenderId === user?.id
 
-                          {/* Info */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between">
-                              <span className={`font-medium truncate ${
-                                conv.unreadCount > 0 ? 'text-white' : 'text-dark-200'
-                              }`}>
-                                {conv.participantName}
-                              </span>
-                              {conv.lastMessageAt && (
-                                <span className={`text-xs ${
-                                  conv.unreadCount > 0 ? 'text-primary-400' : 'text-dark-500'
+                        return (
+                          <button
+                            key={conv.id}
+                            onClick={() => handleSelectConversation(conv)}
+                            className={`w-full p-4 flex items-center gap-3 hover:bg-dark-700/50 transition-colors text-left ${
+                              unreadCount > 0 ? 'bg-primary-500/5' : ''
+                            }`}
+                          >
+                            {/* Avatar */}
+                            <div className="relative">
+                              {participant.avatar ? (
+                                <img 
+                                  src={participant.avatar} 
+                                  alt={participant.name}
+                                  className="w-12 h-12 rounded-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary-500 to-secondary-500 flex items-center justify-center text-white font-bold">
+                                  {participant.name[0]?.toUpperCase() || 'U'}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between">
+                                <span className={`font-medium truncate ${
+                                  unreadCount > 0 ? 'text-white' : 'text-dark-200'
                                 }`}>
-                                  {formatTime(conv.lastMessageAt)}
+                                  {participant.name}
                                 </span>
-                              )}
+                                {conv.lastMessageAt && (
+                                  <span className={`text-xs ${
+                                    unreadCount > 0 ? 'text-primary-400' : 'text-dark-500'
+                                  }`}>
+                                    {formatTime(conv.lastMessageAt)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                {conv.lastMessage && (
+                                  <p className={`text-sm truncate ${
+                                    unreadCount > 0 ? 'text-dark-300 font-medium' : 'text-dark-400'
+                                  }`}>
+                                    {isFromMe && 'Vous: '}
+                                    {conv.lastMessage}
+                                  </p>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1">
-                              {/* Statut du dernier message (si envoyé par nous) */}
-                              {conv.lastMessageSenderId === user?.id && conv.lastMessageStatus && (
-                                <MessageStatusIcon status={conv.lastMessageStatus} isOwn={true} />
-                              )}
-                              {conv.lastMessage && (
-                                <p className={`text-sm truncate ${
-                                  conv.unreadCount > 0 ? 'text-dark-300 font-medium' : 'text-dark-400'
-                                }`}>
-                                  {conv.lastMessageSenderId === user?.id && 'Vous: '}
-                                  {conv.lastMessage}
-                                </p>
-                              )}
-                            </div>
-                          </div>
 
-                          {/* Badge non lu */}
-                          {conv.unreadCount > 0 && (
-                            <motion.span
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              className="min-w-[20px] h-5 px-1.5 bg-primary-500 text-white text-xs font-bold rounded-full flex items-center justify-center"
-                            >
-                              {conv.unreadCount}
-                            </motion.span>
-                          )}
-                        </button>
-                      ))}
+                            {/* Badge non lu */}
+                            {unreadCount > 0 && (
+                              <motion.span
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                className="min-w-[20px] h-5 px-1.5 bg-primary-500 text-white text-xs font-bold rounded-full flex items-center justify-center"
+                              >
+                                {unreadCount}
+                              </motion.span>
+                            )}
+                          </button>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -374,16 +370,16 @@ export function MessagesPopup() {
                               {/* Avatar (pour les messages reçus) */}
                               {!isOwn && (
                                 <div className="w-8 mr-2">
-                                  {showAvatar && activeConv && (
-                                    activeConv.participantAvatar ? (
+                                  {showAvatar && activeParticipant && (
+                                    activeParticipant.avatar ? (
                                       <img 
-                                        src={activeConv.participantAvatar}
-                                        alt={activeConv.participantName}
+                                        src={activeParticipant.avatar}
+                                        alt={activeParticipant.name}
                                         className="w-8 h-8 rounded-full object-cover"
                                       />
                                     ) : (
                                       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500 to-secondary-500 flex items-center justify-center text-white text-xs font-bold">
-                                        {activeConv.participantName[0].toUpperCase()}
+                                        {activeParticipant.name[0]?.toUpperCase() || 'U'}
                                       </div>
                                     )
                                   )}

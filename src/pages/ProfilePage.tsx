@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Edit2, MapPin, Calendar, Link2, Github, Linkedin, Twitter,
   Trophy, Flame, BookOpen, Code, X, Check, Share2, Settings, Camera,
-  UserPlus, UserMinus, MessageCircle, FileText
+  UserPlus, UserMinus, MessageCircle, FileText, Shield, Crown, Star
 } from 'lucide-react'
 import { LevelIndicator, StatCard, CVBuilder } from '../components/ui'
 import { useAuth } from '../contexts/AuthContext'
@@ -51,7 +51,7 @@ export function ProfilePage() {
   const navigate = useNavigate()
   const { userId } = useParams<{ userId: string }>()
   const { user, isAuthenticated } = useAuth()
-  const { data, getUserById, isFollowing, followUser, unfollowUser } = useUserData()
+  const { data, getUserById, isFollowing, followUser, unfollowUser, updatePublicUser } = useUserData()
   const { openConversation } = useMessages()
   
   // Déterminer si c'est notre propre profil ou celui d'un autre utilisateur
@@ -77,7 +77,39 @@ export function ProfilePage() {
     following: number
     skills: any[]
     cvData?: any
+    role?: 'user' | 'creator' | 'moderator' | 'admin'
   } | null>(null)
+
+  // Synchroniser son propre profil dans la liste publique au chargement
+  useEffect(() => {
+    if (user?.id && isOwnProfile) {
+      const profilePhoto = localStorage.getItem('workus_profile_photo')
+      const savedProfile = localStorage.getItem(PROFILE_STORAGE_KEY)
+      let bio = ''
+      let location = ''
+      
+      if (savedProfile) {
+        try {
+          const parsed = JSON.parse(savedProfile)
+          bio = parsed.bio || ''
+          location = parsed.location || ''
+        } catch {
+          // Ignorer
+        }
+      }
+      
+      // Mettre à jour la liste publique avec notre profil
+      updatePublicUser({
+        id: user.id,
+        username: user.username,
+        avatar: profilePhoto || undefined,
+        bio: bio,
+        role: user.role,
+        location: location,
+        joinedAt: user.createdAt
+      })
+    }
+  }, [user?.id, user?.username, user?.role, user?.createdAt, isOwnProfile, updatePublicUser])
 
   // Charger les données de l'utilisateur consulté
   useEffect(() => {
@@ -94,8 +126,8 @@ export function ProfilePage() {
         email: '', // Ne pas afficher l'email des autres utilisateurs
         bio: profileData?.bio || publicUser?.bio || 'Aucune bio disponible',
         avatar: publicUser?.avatar,
-        joinedAt: new Date().toISOString(),
-        location: profileData?.location,
+        joinedAt: publicUser?.joinedAt || new Date().toISOString(),
+        location: profileData?.location || publicUser?.location,
         website: profileData?.website,
         github: profileData?.github,
         linkedin: profileData?.linkedin,
@@ -103,7 +135,8 @@ export function ProfilePage() {
         followers: publicUser?.followers?.length || 0,
         following: 0,
         skills: [],
-        cvData: cvData ? JSON.parse(cvData) : null
+        cvData: cvData ? JSON.parse(cvData) : null,
+        role: publicUser?.role
       })
     }
   }, [userId, user?.id, getUserById])
@@ -377,7 +410,38 @@ export function ProfilePage() {
             )}
           </div>
           <div className="mb-4">
-            <h1 className="text-2xl font-bold text-white">{displayUser.username}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-white">{displayUser.username}</h1>
+              {/* Badge de rôle */}
+              {(() => {
+                const role = isOwnProfile ? user?.role : viewedUser?.role
+                if (role === 'admin') {
+                  return (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gradient-to-r from-red-500 to-orange-500 text-white text-xs font-bold rounded-full">
+                      <Crown className="w-3 h-3" />
+                      Admin
+                    </span>
+                  )
+                }
+                if (role === 'moderator') {
+                  return (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-xs font-bold rounded-full">
+                      <Shield className="w-3 h-3" />
+                      Modérateur
+                    </span>
+                  )
+                }
+                if (role === 'creator') {
+                  return (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs font-bold rounded-full">
+                      <Star className="w-3 h-3" />
+                      Créateur
+                    </span>
+                  )
+                }
+                return null
+              })()}
+            </div>
             <p className="text-dark-400">{displayUser.email}</p>
           </div>
         </div>
