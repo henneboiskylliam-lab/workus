@@ -138,15 +138,21 @@ export function AdminDashboard() {
       const supabaseUsers = await loadUsersFromSupabase()
       
       // 2. Récupérer les OVERRIDES de rôles (modifications admin locales - PRIORITÉ MAXIMALE)
+      // Les overrides sont stockés par ID ET par email pour gérer les différences d'ID
       let roleOverrides: Record<string, string> = {}
       try {
         const overrides = localStorage.getItem('workus_admin_role_overrides')
         if (overrides) {
           roleOverrides = JSON.parse(overrides)
-          console.log('Overrides de rôles chargés:', roleOverrides)
+          console.log('Overrides de rôles chargés:', JSON.stringify(roleOverrides))
         }
       } catch {
         // Ignorer
+      }
+
+      // Fonction helper pour obtenir le rôle override (cherche par ID puis par email)
+      const getOverriddenRole = (id: string, email: string): string | undefined => {
+        return roleOverrides[id] || roleOverrides[email] || roleOverrides[email.toLowerCase()]
       }
       
       // 3. Récupérer les rôles depuis localStorage (pour les utilisateurs locaux)
@@ -180,8 +186,9 @@ export function AdminDashboard() {
 
       // 4. Convertir les utilisateurs IndexedDB
       const localUsers: DisplayUser[] = Array.isArray(dbUsers) ? dbUsers.map(u => {
-        // Priorité: 1. Override admin, 2. localStorage, 3. IndexedDB
-        const finalRole = (roleOverrides[u.id] || localStorageRoles[u.id] || localStorageRoles[u.email] || u.role) as DisplayUser['role']
+        // Priorité: 1. Override admin (par ID ou email), 2. localStorage, 3. IndexedDB
+        const overrideRole = getOverriddenRole(u.id, u.email)
+        const finalRole = (overrideRole || localStorageRoles[u.id] || localStorageRoles[u.email] || u.role) as DisplayUser['role']
         
         return {
           id: u.id,
@@ -205,10 +212,10 @@ export function AdminDashboard() {
         if (!allUserIds.has(user.id) && !allEmails.has(user.email)) {
           allUserIds.add(user.id)
           allEmails.add(user.email)
-          // Appliquer l'override de rôle si existant (PRIORITÉ sur Supabase)
-          const overriddenRole = roleOverrides[user.id]
+          // Appliquer l'override de rôle si existant (cherche par ID puis par email)
+          const overriddenRole = getOverriddenRole(user.id, user.email)
           if (overriddenRole) {
-            console.log(`Override appliqué pour ${user.username}: ${user.role} -> ${overriddenRole}`)
+            console.log(`Override appliqué pour ${user.username} (${user.email}): ${user.role} -> ${overriddenRole}`)
           }
           mergedUsers.push({
             ...user,
@@ -352,19 +359,25 @@ export function AdminDashboard() {
       return
     }
 
-    console.log('=== Changement de rôle v4 ===')
-    console.log('Utilisateur:', targetUser.username, 'ID:', targetUser.id)
+    console.log('=== Changement de rôle v5 ===')
+    console.log('Utilisateur:', targetUser.username, 'ID:', targetUser.id, 'Email:', targetUser.email)
     console.log('Ancien rôle:', targetUser.role, '-> Nouveau rôle:', newRole)
 
     // ÉTAPE 1: Sauvegarder l'OVERRIDE local - SOURCE DE VÉRITÉ ABSOLUE
-    // Cet override prime sur TOUT (Supabase, IndexedDB, etc.)
-    // On ne le supprime JAMAIS - il représente la dernière décision de l'admin
+    // On sauvegarde PAR ID ET PAR EMAIL pour garantir la correspondance
+    // même si l'ID change entre Supabase et local
     try {
       const overrides = localStorage.getItem('workus_admin_role_overrides')
       const currentOverrides = overrides ? JSON.parse(overrides) : {}
+      // Sauvegarder par ID
       currentOverrides[targetUser.id] = newRole
+      // Sauvegarder aussi par EMAIL (clé plus stable)
+      if (targetUser.email) {
+        currentOverrides[targetUser.email] = newRole
+        currentOverrides[targetUser.email.toLowerCase()] = newRole
+      }
       localStorage.setItem('workus_admin_role_overrides', JSON.stringify(currentOverrides))
-      console.log('✅ Override local sauvegardé:', targetUser.id, '->', newRole)
+      console.log('✅ Override local sauvegardé:', targetUser.id, targetUser.email, '->', newRole)
     } catch (err) {
       console.error('Erreur sauvegarde override:', err)
     }
