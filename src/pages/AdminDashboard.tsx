@@ -318,11 +318,32 @@ export function AdminDashboard() {
     setOpenMenuUserId(null)
   }
 
-  // Sauvegarder les modifications d'un utilisateur
-  const handleSaveUser = () => {
+  // Sauvegarder les modifications d'un utilisateur (depuis le modal d'édition)
+  const handleSaveUser = async () => {
     if (!editingUser) return
 
-    // Mettre à jour dans localStorage
+    console.log('=== Sauvegarde utilisateur (modal) v7 ===')
+    console.log('Utilisateur:', editingUser.username, 'ID:', editingUser.id, 'Email:', editingUser.email)
+    console.log('Nouveau rôle:', editForm.role)
+
+    // ÉTAPE 1: Sauvegarder l'OVERRIDE de rôle (comme dans handleChangeRole)
+    const OVERRIDE_KEY = 'workus_role_overrides_v2'
+    try {
+      const existingOverrides = localStorage.getItem(OVERRIDE_KEY)
+      const currentOverrides: Record<string, string> = existingOverrides ? JSON.parse(existingOverrides) : {}
+      
+      // Utiliser l'email normalisé comme clé principale
+      const emailKey = editingUser.email.toLowerCase().trim()
+      currentOverrides[emailKey] = editForm.role
+      currentOverrides[editingUser.id] = editForm.role
+      
+      localStorage.setItem(OVERRIDE_KEY, JSON.stringify(currentOverrides))
+      console.log('✅ Override sauvegardé depuis modal:', emailKey, '->', editForm.role)
+    } catch (err) {
+      console.error('Erreur sauvegarde override:', err)
+    }
+
+    // ÉTAPE 2: Mettre à jour dans localStorage (workus_registered_users)
     const stored = localStorage.getItem('workus_registered_users')
     if (stored) {
       try {
@@ -346,7 +367,48 @@ export function AdminDashboard() {
       }
     }
 
-    // Mettre à jour l'état local
+    // ÉTAPE 3: Mettre à jour dans workus_public_users
+    try {
+      const publicUsers = localStorage.getItem('workus_public_users')
+      if (publicUsers) {
+        const users = JSON.parse(publicUsers)
+        const updatedUsers = users.map((u: any) => 
+          u.id === editingUser.id ? { ...u, role: editForm.role } : u
+        )
+        localStorage.setItem('workus_public_users', JSON.stringify(updatedUsers))
+      }
+    } catch { /* ignorer */ }
+
+    // ÉTAPE 4: Mettre à jour dans IndexedDB
+    try {
+      await userService.update(editingUser.id, { 
+        username: editForm.username,
+        role: editForm.role,
+        isActive: editForm.isActive,
+        isVerified: editForm.isVerified
+      })
+    } catch (err) {
+      console.warn('Erreur IndexedDB:', err)
+    }
+
+    // ÉTAPE 5: Mettre à jour Supabase (en background)
+    if (checkSupabase() && supabase) {
+      supabase
+        .from('profiles')
+        .update({ 
+          username: editForm.username,
+          role: editForm.role, 
+          updated_at: new Date().toISOString() 
+        })
+        .eq('id', editingUser.id)
+        .then(({ error }) => {
+          if (error) console.warn('Supabase update échoué:', error.message)
+          else console.log('✅ Supabase mis à jour')
+        })
+        .catch(err => console.warn('Erreur Supabase:', err))
+    }
+
+    // ÉTAPE 6: Mettre à jour l'état local
     setAllUsers(prev => prev.map(u => {
       if (u.id === editingUser.id) {
         return {
